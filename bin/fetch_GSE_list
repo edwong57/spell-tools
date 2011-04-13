@@ -1,0 +1,58 @@
+#!/bin/bash
+
+#!!
+TMP=/tmp/$USER.$$
+TMP=/tmp/$USER
+
+mkdir -p $TMP
+
+OUT=~/spell-tools/data/GSE_list.2
+
+# operators: AND OR NOT
+# Entry Type: gds (dataset) , gse (series), or gpl (platform)
+# syntax: term[field] Op term[field] ...
+# The max value of retmax is 10000
+# Example: 
+# TERM=human[organism]+AND+topoisomerase[protein+name]
+
+# TERM="Saccharomyces+cerevisiae[organism]"
+
+# For GDS records:
+# TERM="yeast[orgn]+AND+gds[Entry+Type]"
+
+# For GSE records:
+TERM="yeast[orgn]+AND+gse[Entry+Type]"
+
+
+
+function UIDS {
+  # GEO Datasets return the "GDS ID"
+  wget -O $OUT \
+    "http://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=gds&term=$TERM&retmax=10000"
+
+  fgrep "<Id>" $OUT | fgrep "</Id>" | sed -e 's/[	 ]*<Id>\([0-9]*\).*/\1/' | sort -n > $OUT.sorted
+
+}
+
+if [ -r $OUT.map ] ; then
+  rm $OUT.map
+fi
+
+touch $OUT.map
+
+cat $OUT.sorted | while read -r ID etc ; do
+  # ID=200027539
+
+  # The entire page:
+  # wget -O GDS http://www.ncbi.nlm.nih.gov/gds/?term=200027539
+  # then grep for /geo/query/acc.cgi?acc=GSE27539 or some such
+
+# -nv is good too
+  wget -q -O $TMP.out "http://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=gds&id=$ID&report=docsum&retmode=text"
+  # grep for: 1: GSE27539
+  ACCESSION=$(grep GSE $TMP.out | grep record | sed 's/.*\(GSE[0-9]*\) .*/\1/')
+  echo $ID $ACCESSION
+  echo $ID $ACCESSION >> $OUT.map
+done
+
+echo See $OUT.map
