@@ -1,14 +1,145 @@
 #!/bin/bash
+# Copyright (C) 2011 peak@princeton.edu
+# License: Creative Commons Attribution-NonCommerical-ShareAlike 3.0 Unported (CC BY-NC-SA 3.0)
+# See http://creativecommons.org/licenses/by-nc/3.0/
+# Attribution shall include the copyright notice above.
+
+# For help: $0 --help
+
+VERSION=0.1
+
+ORGANISM=yeast
 
 #!!
+# DOWNLOAD=~/spell-tools/data/download
+# TEST=2
+# VERBOSE=1
+# SINCE=28390
+
 TMP=/tmp/$USER.$$
-TMP=/tmp/$USER
+# TMP=/tmp/$USER
+# TMP=~/spell-tools/data/20110426
 
-mkdir -p $TMP
+# Requires: 
 
-DIROUT=~/spell-tools/data
-OUT=$DIROUT/GSE_list
+BN=`basename $0`
+DN=`dirname $0`
 
+function help {
+cat <<EOF
+Syntax: $BN [OPTIONS]
+
+This script can be used:
+  1) to obtain a list of GSE record identifiers for a specific organism;
+  2) to download a set of GSE record files for a specific organism.
+
+Here a "GSE record identifier" is a string (such as GSE18) of the form GSEn where n is a GSE accession number,
+and a "GSE record file" is a file with filename of the form GSEn_family.soft.gz
+
+
+Options:
+  -o FILE :: file into which the selected GSE record identifiers are to be written
+  --include FILE :: file of GSE record ids to include, one per line (lines beginning with # are ignored)
+  --exclude FILE :: file of GSE record ids to exclude, one per line
+  --download DIRECTORY :: the directory into which GSE record files are to be downloaded
+  --organism ORGANISM :: default is $ORGANISM
+  --since ACCESSION_NUMBER  :: ignore GSE records with accession numbers less than or equal to ACCESSION_NUMBER.
+
+Notes:
+  * Only one of --include and --exclude may be specified.
+  * If "--include FILE" is specified then "--download DIRECTORY" should also be specified.
+  * "--since GSEnnnn" will be interpreted as "--since nnnn"
+
+Version: $BN $VERSION
+
+See source for copyright and licensing details.
+EOF
+}
+
+function check_exists {
+  if [ -z "$1" -o ! -r "$1" ] ; then
+    echo "$BN: $1 cannot be read"
+    exit 1
+  fi
+}
+
+while [ "$1" ]
+do case "$1" in
+      -h | --help ) help
+           exit
+           ;;
+      -o ) OUTFILE="$2"
+           shift 2
+           ;;
+      --include ) INCLUDE="$2"
+	   check_exists "$2"
+           shift 2
+           ;;
+      --exclude ) EXCLUDE="$2"
+	   check_exists "$2"
+           shift 2
+           ;;
+      --download ) DOWNLOAD="$2"
+           shift 2
+           ;;
+      --since ) SINCE="$2"
+	   SINCE="${SINCE/#GSE/}"
+           shift 2
+           ;;
+      --organism ) ORGANISM="$2"
+           shift 2
+           ;;
+      --test ) TEST=2
+           shift 2
+           ;;
+      -v | --verbose ) VERBOSE=1
+           shift
+           ;;
+      -* ) echo "$BN: unknown option $1"
+           exit 1
+           ;;
+      *  ) break
+           ;;
+  esac
+done
+
+
+if [ -n "$INCLUDE" -a -n "$EXCLUDE" ] ; then
+  echo $BN: only one of --include and --exclude may be specified.
+  exit 1
+fi
+
+if [ -n "$INCLUDE" -a -z "$DOWNLOAD" ] ; then
+  echo "$BN: --download must be specified since --include has been specified."
+  exit 1
+fi
+
+
+function continuep {
+   local PROMPT="$1"
+   if [ -z "$1" ] ; then
+      PROMPT="Continue? [yN]"
+   fi
+   read -p "$PROMPT " x
+   case "$x" in
+     y | Y | yes | YES ) return
+     ;;
+   esac
+   exit
+}
+
+function verbose {
+  if [ "$VERBOSE" ] ; then
+    echo "$@"
+  fi
+}
+
+
+mkdir -p "$TMP"
+
+OUT=$TMP/GSE_list
+
+# GEO query language:
 # operators: AND OR NOT
 # Entry Type: gds (dataset) , gse (series), or gpl (platform)
 # syntax: term[field] Op term[field] ...
@@ -22,7 +153,9 @@ OUT=$DIROUT/GSE_list
 # TERM="yeast[orgn]+AND+gds[Entry+Type]"
 
 # For GSE records:
-TERM="yeast[orgn]+AND+gse[Entry+Type]"
+# TERM="yeast[orgn]+AND+gse[Entry+Type]"
+
+TERM="$ORGANSIM[organism]+AND++gse[Entry+Type]"
 
 function UIDS {
   # GEO Datasets return the "GDS ID"
@@ -33,32 +166,87 @@ function UIDS {
 
 }
 
+# A filter to exclude items in $1
+# Neither stdin nor $1 need be sorted.
+# Global: TMP
+function exclude {
+  sort "$1" > $TMP.sort
+  sort | comm -23 - "$TMP.sort"
+  /bin/rm $TMP.sort
+}
+
+
 function map {
 
   if [ -r $OUT.map ] ; then
-    rm $OUT.map
+    /bin/rm "$OUT.map"
   fi
 
-  touch $OUT.map
+  if [ -r $OUT.accession ] ; then
+    /bin/rm "$OUT.accession"
+  fi
+
+  touch "$OUT.map" "$OUT.accession"
 
   cat $OUT.sorted | while read -r ID etc ; do
-  # ID=200027539
+    # ID=200027539
+    # The entire page:
+    # wget -O GDS http://www.ncbi.nlm.nih.gov/gds/?term=200027539
+    # then grep for /geo/query/acc.cgi?acc=GSE27539 or some such
 
-  # The entire page:
-  # wget -O GDS http://www.ncbi.nlm.nih.gov/gds/?term=200027539
-  # then grep for /geo/query/acc.cgi?acc=GSE27539 or some such
+    # -nv is good too
+    wget -q -O $TMP.out "http://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=gds&id=$ID&report=docsum&retmode=text"
+    # grep for: 1: GSE27539
+    ACCESSION=$(grep GSE $TMP.out | grep record | sed 's/.*\(GSE[0-9]*\) .*/\1/')
+    verbose $ID $ACCESSION
 
-  # -nv is good too
-  wget -q -O $TMP.out "http://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=gds&id=$ID&report=docsum&retmode=text"
-  # grep for: 1: GSE27539
-  ACCESSION=$(grep GSE $TMP.out | grep record | sed 's/.*\(GSE[0-9]*\) .*/\1/')
-  echo $ID $ACCESSION
-  echo $ID $ACCESSION >> $OUT.map
-done
+    if [ -z "$SINCE" ] ; then
+       echo "$ID $ACCESSION" >> $OUT.map
+       echo "$ACCESSION" >> "$OUT.accession"
+    elif [ "${ACCESSION/#GSE/}" -gt "$SINCE" ] ; then
+       echo "$ID $ACCESSION" >> $OUT.map
+       echo "$ACCESSION" >> $OUT.accession
+    else
+        echo Skipping $ACCESSION
+    fi
+
+    if [ -n "$EXCLUDE" ] ; then
+      /bin/mv $OUT.accession  $OUT.accession.bak
+      cat $OUT.accession.bak | exclude "$EXCLUDE" > $OUT.accession
+    fi
+  done
 }
 
-mkdir -p $DIROUT/download
-cat $OUT.map | while read -r id accession ; do
-  # wget -N -r l1 --no-parent -P $DIROUT/download -A.soft.gz ftp://ftp.ncbi.nih.gov/pub/geo/DATA/SOFT/by_series/$accession
-  wget -N -P $DIROUT/download -A.soft.gz "ftp://ftp.ncbi.nih.gov/pub/geo/DATA/SOFT/by_series/$accession/${accession}_family.soft.gz"
-done
+
+# Download the soft files specified by stdin
+# ASSUMES: $DOWNLOAD has been specified
+function download {
+  mkdir -p "$DOWNLOAD"
+  while read -r accession ; do
+    if [ -z "$accession" -o "${accession:0:1}" = "#" ] ; then continue ; fi
+    # -A SPEC == --acclist SPEC
+    wget -N -P "$DOWNLOAD" -A.soft.gz "ftp://ftp.ncbi.nih.gov/pub/geo/DATA/SOFT/by_series/$accession/${accession}_family.soft.gz"
+  done
+}
+
+
+if [ -z "$INCLUDE" ] ; then
+  UIDS
+  map
+  if [ -n "$DOWNLOAD" ] ; then
+    if [ -z "$TEST" ] ; then
+       cat $OUT.accession | download
+    else
+       head -n "$TEST" $OUT.accession | download
+    fi
+  fi
+
+else
+    if [ -n "$DOWNLOAD" ] ; then
+      cat "$INCLUDE" | download
+    fi
+fi
+
+if [ -n "$OUTFILE" -a -r "$OUT.accession" ] ; then
+  /bin/mv "$OUT.accession" "$OUTFILE"
+fi
