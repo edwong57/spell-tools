@@ -8,6 +8,7 @@
 
 VERSION=0.1
 
+# Default organism:
 ORGANISM=yeast
 
 # WARNING: we may run "/bin/rm -r $TMP"
@@ -27,12 +28,15 @@ This script can be used:
   1) to obtain a list of GSE record identifiers for a specific organism;
   2) to download a set of GSE record files for a specific organism.
 
-Here a "GSE record identifier" is a string (such as GSE18) of the form GSEn where n is a GSE accession number,
-and a "GSE record file" is a file with filename of the form GSEn_family.soft.gz
+Here a "GSE record identifier" is a string (such as GSE18) of the form
+GSEn where n is a GSE accession number, and a "GSE record file" is a
+file with filename of the form GSEn_family.soft.gz
 
-To download GSE record files, the --download option must be specified.
+To download GSE record files, the destination directory must be specified 
+using the "--download" option.
 
-If the -o option is not specified, GSE record identifiers are written to stdout.
+If the -o option is not specified, GSE record identifiers are written
+to stdout.
 
 Options:
   -o FILE :: file into which the selected GSE record identifiers are to be written
@@ -40,16 +44,22 @@ Options:
   --exclude FILE :: file of GSE record ids to exclude, one per line
   --download DIRECTORY :: the directory into which GSE record files are to be downloaded
   --organism ORGANISM :: taxonomic term (see below); default is $ORGANISM
-  --since ACCESSION_NUMBER  :: ignore GSE records with accession numbers less than or equal to ACCESSION_NUMBER.
+  --since ACCESSION_NUMBER  :: ignore GSE records with GSE accession numbers less than or equal to ACCESSION_NUMBER.
   --keep :: keep temporary files
+  --verbose :: verbose mode
 
 Notes:
-  * ORGANISM may in principle be any NCBI taxonomic term (http://www.ncbi.nlm.nih.gov/Taxonomy) but not all
-    such terms have associated GSE data; if ORGANISM is specified with a leading or trailing "*" it will be
-    interpreted as a wildcard character.
+  * ORGANISM may in principle be any NCBI taxonomic term
+    (http://www.ncbi.nlm.nih.gov/Taxonomy) but not all such terms have
+    associated GSE data; if ORGANISM is specified with a leading or
+    trailing "*" it will be interpreted as a wildcard character.
   * Only one of --include and --exclude may be specified.
   * If "--include FILE" is specified then "--download DIRECTORY" should also be specified.
-  * "--since GSEnnnn" will be interpreted as "--since nnnn"
+  * "--since GSEn" will be interpreted as "--since n"
+
+Example:
+
+$BN --download . --since GSE1986
 
 References:
   * http://www.ncbi.nlm.nih.gov/geo/info/qqtutorial.html (Querying GEO Datasets)
@@ -123,7 +133,7 @@ if [ -n "$INCLUDE" -a -z "$DOWNLOAD" ] ; then
   exit 1
 fi
 
-if [ "$TEST" = 0 ] ; then
+if [ "$TEST" = -1 ] ; then
   # DOWNLOAD=~/spell-tools/data/download
   TEST=10000
   VERBOSE=1
@@ -166,6 +176,7 @@ OUT=$TMP/GSE_list
 # operators: AND OR NOT
 # Entry Type: gds (dataset) , gse (series), or gpl (platform)
 # syntax: term[field] Op term[field] ...
+# The default value of retmax is too small to be omitted.
 # The max value of retmax is 10000
 # Example: 
 # TERM=human[organism]+AND+topoisomerase[protein+name]
@@ -209,10 +220,9 @@ function initialize {
 }
 
 
-# Global: everything except count ID
+# Global: everything except count ID ACCESSION
 function map {
-  local count
-  local ID
+  local count ID ACCESSION
   count=0
   initialize "$OUT.map" "$OUT.accession"
   
@@ -250,7 +260,13 @@ function map {
 # Download the soft files specified by stdin
 # ASSUMES: $DOWNLOAD has been specified
 function download {
+  local rc accession
   mkdir -p "$DOWNLOAD"
+  if [ $? != 0 ] ; then
+    rc=$?
+    echo "$BN: unable to mkdir $DOWNLOAD"
+    exit $rc
+  fi
   while read -r accession ; do
     if [ -z "$accession" -o "${accession:0:1}" = "#" ] ; then continue ; fi
     # -A SPEC == --acclist SPEC
@@ -287,7 +303,8 @@ fi
 # Cleanup:
 if [ -z "$KEEP" ] ; then
   if [ -d "$TMP" ] ; then
-  /bin/rm -r "$TMP"
+    /bin/rm -r "$TMP"
+  fi
 else
   verbose "$BN: temporary files are in $TMP"
 fi
