@@ -10,17 +10,11 @@ VERSION=0.1
 
 ORGANISM=yeast
 
-#!!
-# DOWNLOAD=~/spell-tools/data/download
-# TEST=2
-# VERBOSE=1
-# SINCE=28390
-
-TMP=/tmp/$USER.$$
+# WARNING: we may run "/bin/rm -r $TMP"
 # TMP=/tmp/$USER
-# TMP=~/spell-tools/data/20110426
+TMP=/tmp/$USER.$$
 
-# Requires: 
+# Requires: eutils website (esearch and efetch)
 
 BN=`basename $0`
 DN=`dirname $0`
@@ -36,19 +30,30 @@ This script can be used:
 Here a "GSE record identifier" is a string (such as GSE18) of the form GSEn where n is a GSE accession number,
 and a "GSE record file" is a file with filename of the form GSEn_family.soft.gz
 
+To download GSE record files, the --download option must be specified.
+
+If the -o option is not specified, GSE record identifiers are written to stdout.
 
 Options:
   -o FILE :: file into which the selected GSE record identifiers are to be written
   --include FILE :: file of GSE record ids to include, one per line (lines beginning with # are ignored)
   --exclude FILE :: file of GSE record ids to exclude, one per line
   --download DIRECTORY :: the directory into which GSE record files are to be downloaded
-  --organism ORGANISM :: default is $ORGANISM
+  --organism ORGANISM :: taxonomic term (see below); default is $ORGANISM
   --since ACCESSION_NUMBER  :: ignore GSE records with accession numbers less than or equal to ACCESSION_NUMBER.
+  --keep :: keep temporary files
 
 Notes:
+  * ORGANISM may in principle be any NCBI taxonomic term (http://www.ncbi.nlm.nih.gov/Taxonomy) but not all
+    such terms have associated GSE data; if ORGANISM is specified with a leading or trailing "*" it will be
+    interpreted as a wildcard character.
   * Only one of --include and --exclude may be specified.
   * If "--include FILE" is specified then "--download DIRECTORY" should also be specified.
   * "--since GSEnnnn" will be interpreted as "--since nnnn"
+
+References:
+  * http://www.ncbi.nlm.nih.gov/geo/info/qqtutorial.html (Querying GEO Datasets)
+  * http://www.ncbi.nlm.nih.gov/Taxonomy (Taxonomic terms admissible as ORGANISM)
 
 Version: $BN $VERSION
 
@@ -75,6 +80,9 @@ do case "$1" in
 	   check_exists "$2"
            shift 2
            ;;
+      --keep ) KEEP=1
+           shift
+           ;;
       --exclude ) EXCLUDE="$2"
 	   check_exists "$2"
            shift 2
@@ -89,7 +97,7 @@ do case "$1" in
       --organism ) ORGANISM="$2"
            shift 2
            ;;
-      --test ) TEST=2
+      --test ) TEST="$2"
            shift 2
            ;;
       -v | --verbose ) VERBOSE=1
@@ -104,6 +112,7 @@ do case "$1" in
 done
 
 
+# Preliminary check of options:
 if [ -n "$INCLUDE" -a -n "$EXCLUDE" ] ; then
   echo $BN: only one of --include and --exclude may be specified.
   exit 1
@@ -114,6 +123,20 @@ if [ -n "$INCLUDE" -a -z "$DOWNLOAD" ] ; then
   exit 1
 fi
 
+if [ "$TEST" = 0 ] ; then
+  # DOWNLOAD=~/spell-tools/data/download
+  TEST=10000
+  VERBOSE=1
+  # SINCE=28390
+  # EXCLUDE=/Genomics/Users/peak/spell-tools/data/exclude
+  TMP=~/spell-tools/data/20110427
+  KEEP=1
+  verbose DOWNLOAD=$DOWNLOAD
+  verbose TEST=$TEST
+  verbose SINCE=$SINCE
+  verbose TMP=$TMP
+  verbose KEEP=$KEEP
+fi
 
 function continuep {
    local PROMPT="$1"
@@ -155,7 +178,7 @@ OUT=$TMP/GSE_list
 # For GSE records:
 # TERM="yeast[orgn]+AND+gse[Entry+Type]"
 
-TERM="$ORGANSIM[organism]+AND++gse[Entry+Type]"
+TERM="$ORGANISM[organism]+AND+gse[Entry+Type]"
 
 function UIDS {
   # GEO Datasets return the "GDS ID"
@@ -168,53 +191,59 @@ function UIDS {
 
 # A filter to exclude items in $1
 # Neither stdin nor $1 need be sorted.
+# Example: cat - | exclude FILE
 # Global: TMP
 function exclude {
-  sort "$1" > $TMP.sort
-  sort | comm -23 - "$TMP.sort"
-  /bin/rm $TMP.sort
+  sort "$1" > $TMP/sort
+  sort | comm -23 - "$TMP/sort"
+  /bin/rm $TMP/sort
 }
 
 
+function initialize {
+  for f 
+  do
+    if [ -r "$f" ] ; then /bin/rm "$f" ; fi
+    touch "$f"
+  done
+}
+
+
+# Global: everything except count ID
 function map {
-
-  if [ -r $OUT.map ] ; then
-    /bin/rm "$OUT.map"
-  fi
-
-  if [ -r $OUT.accession ] ; then
-    /bin/rm "$OUT.accession"
-  fi
-
-  touch "$OUT.map" "$OUT.accession"
-
+  local count
+  local ID
+  count=0
+  initialize "$OUT.map" "$OUT.accession"
+  
   cat $OUT.sorted | while read -r ID etc ; do
+
+    if [[ -n "$TEST" && $count -gt $TEST ]] ; then break ; fi
+
     # ID=200027539
     # The entire page:
     # wget -O GDS http://www.ncbi.nlm.nih.gov/gds/?term=200027539
     # then grep for /geo/query/acc.cgi?acc=GSE27539 or some such
 
     # -nv is good too
-    wget -q -O $TMP.out "http://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=gds&id=$ID&report=docsum&retmode=text"
+    wget -q -O $TMP/out "http://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=gds&id=$ID&report=docsum&retmode=text"
     # grep for: 1: GSE27539
-    ACCESSION=$(grep GSE $TMP.out | grep record | sed 's/.*\(GSE[0-9]*\) .*/\1/')
+    ACCESSION=$(grep GSE $TMP/out | grep record | sed 's/.*\(GSE[0-9]*\) .*/\1/')
     verbose $ID $ACCESSION
 
-    if [ -z "$SINCE" ] ; then
-       echo "$ID $ACCESSION" >> $OUT.map
+    if [[ -z "$SINCE" || "${ACCESSION/#GSE/}" -gt "$SINCE" ]] ; then
+       count=$((count + 1))
+       echo "$ID $ACCESSION" >> "$OUT.map"
        echo "$ACCESSION" >> "$OUT.accession"
-    elif [ "${ACCESSION/#GSE/}" -gt "$SINCE" ] ; then
-       echo "$ID $ACCESSION" >> $OUT.map
-       echo "$ACCESSION" >> $OUT.accession
     else
-        echo Skipping $ACCESSION
-    fi
-
-    if [ -n "$EXCLUDE" ] ; then
-      /bin/mv $OUT.accession  $OUT.accession.bak
-      cat $OUT.accession.bak | exclude "$EXCLUDE" > $OUT.accession
+       verbose Skipping $ACCESSION
     fi
   done
+
+  if [ -n "$EXCLUDE" ] ; then
+    /bin/mv $OUT.accession  $OUT.accession.bak
+    cat $OUT.accession.bak | exclude "$EXCLUDE" > $OUT.accession
+  fi
 }
 
 
@@ -229,7 +258,7 @@ function download {
   done
 }
 
-
+# If $INCLUDE has been specified then use that:
 if [ -z "$INCLUDE" ] ; then
   UIDS
   map
@@ -247,6 +276,18 @@ else
     fi
 fi
 
-if [ -n "$OUTFILE" -a -r "$OUT.accession" ] ; then
-  /bin/mv "$OUT.accession" "$OUTFILE"
+if [ -r "$OUT.accession" ] ; then
+  if [ -n "$OUTFILE" ] ; then
+     /bin/mv "$OUT.accession" "$OUTFILE"
+  else
+     cat "$OUT.accession"
+  fi
+fi
+
+# Cleanup:
+if [ -z "$KEEP" ] ; then
+  if [ -d "$TMP" ] ; then
+  /bin/rm -r "$TMP"
+else
+  verbose "$BN: temporary files are in $TMP"
 fi
