@@ -1,4 +1,4 @@
-#!/usr/bin/ruby
+#!/usr/bin/env ruby
 # Copyright (C) 2007 Matt Hibbs
 # License: Creative Commons Attribution-NonCommerical-ShareAlike 3.0 Unported (CC BY-NC-SA 3.0)
 # See http://creativecommons.org/licenses/by-nc/3.0/

@@ -1,3 +1,8 @@
+#!/usr/bin/env ruby
+# Source: troilkatt/scripts/array_utils/seriesFamilyParser.rb as of Feb 4. 2011
+# (Except for white space, the above version is identical to the version provided by Patrick Bradley (11 Jan 2011).)
+# This script is believed to have been orginally written by Matt Hibbs
+# This version contains modifications by peak@princeton.edu marked #peak hereafter.
 #!/usr/bin/ruby
 
 require 'set'
@@ -9,8 +14,15 @@ def cancelout()
 end
 
 if ARGV.length < 1
-  puts "ARGS:"
-  puts "0 - GSE***_family.soft file"
+  #peak modified usage text
+  puts "Usage: _ GSEnnnn_family.soft [configurationFile]"
+  puts "STDOUT: PCL format"
+  puts "configurationFile: The first lines should specify the column numbers for:"
+  puts "Platform ProbeID"
+  puts "Platform GeneName"
+  puts "Sample ProbeID"
+  puts "Sample Value"
+  puts "The next line should specify 1 for convertZerosToMV (convert zeros to missing values) else 0"
   exit 0
 end
 
