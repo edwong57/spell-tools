@@ -7,9 +7,10 @@
 
 require 'set'
 
-def cancelout()
-  $stderr.print("Received negative number; canceling...\n")
-  Process.exit
+# message (a string) is optional:
+def cancelout(message = "Received negative number; canceling...", rc=0)
+  if message: $stderr.print(message + "\n" ) end
+  Process.exit(rc)
   return
 end
 
@@ -46,6 +47,32 @@ sampID = nil
 
 missingValueCount = 0
 zeroValueCount = 0
+
+# peak -start:
+# if intelligent then attempt intelligent guess of identifiers
+intelligent=true
+
+class Array
+  # return the index in self of the first element in elts that occurs in self; else nil
+  def first_match(elts)
+    hash = {}
+    if self.size == 0
+      return nil
+    end
+    for i in 0 ... self.size
+      hash[self[i]] = i
+    end 
+    for i in 0 ... elts.size
+      x = hash[elts[i]]
+      if x != nil
+        return x
+      end
+    end
+    return nil
+  end
+end
+
+# peak -end.
 
 #Adding config script hack
 
@@ -101,6 +128,25 @@ IO.foreach(ARGV[0]) do |line|
       if useConfig
         platIdIdxs[platID] = platIdIdxAll
         platNameIdxs[platID] = platNameIdxAll
+
+      #peak - start
+      elsif intelligent
+        # Platform probe id
+        headers = platLines[0].split("\t")
+        j = headers.first_match([ "ID" ])
+        if j == nil: cancelout("unable to find label for platform probe id", 1) end
+        platIdIdxs[platID] = j
+        $stderr.print("Platform probe id is being set to " + j.to_s + " (" + headers[j] + ")\n")
+
+        # Gene names
+        # "ORF", "GB_ACC", "GENOME_ACC", "RANGE_GB", "GB_LIST", "Gene_ID", "CLONE_ID", "Genename", "GENE_NAME", "Common Name", "Gene Symbol", "GENE_SYMBOL"
+        # ordered list of candidates from SeriesFamilyParser.java:
+        j = headers.first_match( [ "GENE_SYMBOL", "GENE SYMBOL", "GENE_NAME", "GENE NAME", "GENE ID", "ORF", "DDB" ] )
+        if j == nil: cancelout("unable to find label for gene names", 1) end
+        platNameIdxs[platID] = j
+        $stderr.print("gene name column is being set to " + j.to_s + " (" + headers[j] + ")\n")
+      #peak - end
+
       else
         $stderr.puts "Columns for platform " + platID
         numCols = platLines[0].split("\t").length
@@ -116,7 +162,6 @@ IO.foreach(ARGV[0]) do |line|
           end
           $stderr.puts
         end
-
         $stderr.print "Which row contains the probe ID? "
         platIdIdxs[platID] = $stdin.gets.to_i
         # useful if called from batch file -- pjbradle
@@ -151,6 +196,23 @@ IO.foreach(ARGV[0]) do |line|
         if useConfig
           sampIdIdxs[sampPlatform[sampID]] = sampIdIdxAll
           sampValueIdxs[sampPlatform[sampID]] = sampValueIdxAll
+        #peak - start
+        elsif intelligent
+          headers=sampLines[0].split("\t")
+          #!! $stderr.puts "Headers", headers, "\n"
+
+          # List of keywords (most-preferred first) used to detect the sample probe ID
+          j = headers.first_match( ["ID_REF"] )
+          if j == nil: cancelout("field for sample probeID not found",1 ) end
+          sampIdIdxs[sampPlatform[sampID]] = j
+          $stderr.print("Sample probe ID column is being set to " + j.to_s + " (" + headers[j] + ")\n")
+
+          # List of keywords (most-preferred first) used to detect the expression values:
+          j = headers.first_match( ["VALUE"] )
+          if j == nil: cancelout("field for expression value not found",1 ) end
+          sampValueIdxs[sampPlatform[sampID]] = j
+          $stderr.print("Sample probe ID column is being set to " + j.to_s + " (" + headers[j] + ")\n")
+        #peak - end
         else
           $stderr.puts "Columns for sample " + sampID + " using platform " + sampPlatform[sampID].to_s
           numCols = sampLines[0].split("\t").length
@@ -189,6 +251,9 @@ IO.foreach(ARGV[0]) do |line|
 end
 if useConfig
   zerosAsMissingVals=convertZerosToMV
+elsif intelligent && missingValueCount > 0
+  $stderr.puts "missingValueCount == " + missingValueCount.to_s + " > 0 so we will NOT treat exact zeros as missing values\n"
+  zerosAsMissingVals = 0
 else
   $stderr.puts "\nThere are " + missingValueCount.to_s + " missing values, and " + zeroValueCount.to_s + " exactly zero values"
   $stderr.print "Treat exact zeros as missing values (0=no, 1=yes)? "
