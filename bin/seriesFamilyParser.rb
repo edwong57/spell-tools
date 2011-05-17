@@ -1,29 +1,83 @@
 #!/usr/bin/env ruby
+# Copyright (C) 2007-2011 Matt Hibbs, Peter Koppstein
+# License: Creative Commons Attribution-NonCommerical-ShareAlike 3.0 Unported (CC BY-NC-SA 3.0)
+# See http://creativecommons.org/licenses/by-nc/3.0/
+# Attribution shall include this copyright notice.
+
 # Source: troilkatt/scripts/array_utils/seriesFamilyParser.rb as of Feb 4. 2011
 # (Except for white space, the above version is identical to the version provided by Patrick Bradley (11 Jan 2011).)
-# This script is believed to have been orginally written by Matt Hibbs
 # This version contains modifications by peak@princeton.edu marked #peak hereafter.
-#!/usr/bin/ruby
 
 require 'set'
 
-# message (a string) is optional:
-def cancelout(message = "Received negative number; canceling...", rc=0)
-  if message: $stderr.print(message + "\n" ) end
-  Process.exit(rc)
-  return
+#peak:
+require 'optparse'
+require 'ostruct'
+
+# Unless otherwise specified, for any key, options.key is nil
+options = OpenStruct.new
+
+options.version = "0.0.1"
+
+optionparser = OptionParser.new do |opts|
+  bn = File.basename($0)
+  opts.banner = "Usage: #{bn} [options] FILE [configurationFile]"
+
+  opts.separator("FILE should be an NCBI GSE \"soft\" file.")
+  opts.separator("This script emits data in PCL format to stdout.")
+  opts.separator("Options:")
+
+  opts.on("-b", "--batch", "Batch mode (no interactions)") do
+    options.batch = true
+  end
+
+  opts.on("-v", "--[no-]verbose", "Run verbosely") do |v|
+    options.verbose = v
+  end
+
+  opts.on_tail("-V", "--version", "Show version and exit") do
+    puts options.version
+    exit
+  end
+
+  explanation = <<-EOS
+configurationFile:
+  If configurationFile is specified, the first four lines should specify the column numbers for:
+    Platform ProbeID
+    Platform GeneName
+    Sample ProbeID
+    Sample Value
+
+    The next line should specify 1 for convertZerosToMV (convert zeros to missing values), else 0.
+
+Example:
+    #{bn} --batch GSE0100_family.soft > GSE0100.pcl
+
+EOS
+
+  opts.on("-h", "--help", "print this help") do
+    puts opts
+    print "\n", explanation
+    exit 0
+  end
 end
 
+# Modify ARGV
+optionparser.parse!
+
+
+#peak: message (a string) is optional:
+def cancelout(message = "Received negative number; canceling...", rc=0)
+  $stderr.print(message + "\n" ) if message
+  Process.exit(rc)
+end
+
+
 if ARGV.length < 1
-  #peak modified usage text
-  puts "Usage: _ GSEnnnn_family.soft [configurationFile]"
-  puts "STDOUT: PCL format"
-  puts "configurationFile: The first lines should specify the column numbers for:"
-  puts "Platform ProbeID"
-  puts "Platform GeneName"
-  puts "Sample ProbeID"
-  puts "Sample Value"
-  puts "The next line should specify 1 for convertZerosToMV (convert zeros to missing values) else 0"
+  #peak: 
+  # To emit help: optionparser.parse("-h")
+  puts optionparser.banner
+  puts "For help type #{File.basename($0)} -h"
   exit 0
 end
 
@@ -47,10 +101,6 @@ sampID = nil
 
 missingValueCount = 0
 zeroValueCount = 0
-
-# peak -start:
-# if intelligent then attempt intelligent guess of identifiers
-intelligent=true
 
 class Array
   # return the index in self of the first element in elts that occurs in self; else nil
@@ -130,7 +180,7 @@ IO.foreach(ARGV[0]) do |line|
         platNameIdxs[platID] = platNameIdxAll
 
       #peak - start
-      elsif intelligent
+      elsif options.batch
         # Platform probe id
         headers = platLines[0].split("\t")
         j = headers.first_match([ "ID" ])
@@ -197,7 +247,7 @@ IO.foreach(ARGV[0]) do |line|
           sampIdIdxs[sampPlatform[sampID]] = sampIdIdxAll
           sampValueIdxs[sampPlatform[sampID]] = sampValueIdxAll
         #peak - start
-        elsif intelligent
+        elsif options.batch
           headers=sampLines[0].split("\t")
           #!! $stderr.puts "Headers", headers, "\n"
 
@@ -251,7 +301,7 @@ IO.foreach(ARGV[0]) do |line|
 end
 if useConfig
   zerosAsMissingVals=convertZerosToMV
-elsif intelligent && missingValueCount > 0
+elsif options.batch && missingValueCount > 0
   $stderr.puts "missingValueCount == " + missingValueCount.to_s + " > 0 so we will NOT treat exact zeros as missing values\n"
   zerosAsMissingVals = 0
 else
