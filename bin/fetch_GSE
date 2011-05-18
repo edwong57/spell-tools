@@ -6,11 +6,12 @@
 
 # For help: $0 --help
 
-VERSION=0.2
+VERSION=0.2.1
 # New in 0.2: --series-type, --series-types, --by-array
+# New in 0.2.1: default ORGANISM changed
 
 # Default organism:
-ORGANISM=yeast
+ORGANISM=Saccharomyces+cerevisiae
 
 # WARNING: we may run "/bin/rm -r $TMP"
 # TMP=/tmp/$USER
@@ -46,9 +47,12 @@ Options:
   --exclude FILE       :: file of GSE record ids to exclude, one per line
   --download DIRECTORY :: the directory into which GSE record files are to be downloaded
   --organism ORGANISM  :: taxonomic term (see below); default is $ORGANISM
-  --since ACCESSION_NUMBER  :: ignore GSE records with GSE accession numbers less than or equal to ACCESSION_NUMBER.
+  --since ID           :: if ID is an integer, then ignore GSE records with GSE accession  
+                          numbers less than or equal to ID; similarly if ID is a GSE record
+                          identifier (see example).
   --series-type TYPE   :: retain only those GSE records of the specified series type (see below)
-  --series-types FILE  :: retain only those GSE records with a series type equal to one of the types in the file FILE (one TYPE per line)
+  --series-types FILE  :: retain only those GSE records with a series type equal to one of the
+                          types in the file FILE (one TYPE per line)
   -k  | --keep         :: keep temporary files
   -q  | --quiet        :: passed to wget
   -nv | --no-verbose   :: passed to wget
@@ -62,6 +66,7 @@ Notes:
   * Only one of --include and --exclude may be specified.
   * If "--include FILE" is specified then "--download DIRECTORY" should also be specified.
   * "--since GSEn" will be interpreted as "--since n"
+  * wget is run with the -N option to avoid unnecessary downloads.
 
 Specifying a series type is equivalent to the GEO query term "TYPE"[Dataset Type].
 Illustrative valid values of TYPE are:
