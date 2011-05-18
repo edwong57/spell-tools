@@ -6,7 +6,8 @@
 
 # For help: $0 --help
 
-VERSION=0.1
+VERSION=0.2
+# New in 0.2: --series-type, --series-types, --by-array
 
 # Default organism:
 ORGANISM=yeast
@@ -39,16 +40,19 @@ If the -o option is not specified, GSE record identifiers are written
 to stdout.
 
 Options:
-  -o FILE :: file into which the selected GSE record identifiers are to be written
-  --include FILE :: file of GSE record ids to include, one per line (lines beginning with # are ignored)
-  --exclude FILE :: file of GSE record ids to exclude, one per line
+  -o FILE              :: file into which the selected GSE record identifiers are to be written
+  --by-array           :: equivalent to: --series-type "Expression profiling by array"
+  --include FILE       :: file of GSE record ids to include, one per line (lines beginning with # are ignored)
+  --exclude FILE       :: file of GSE record ids to exclude, one per line
   --download DIRECTORY :: the directory into which GSE record files are to be downloaded
-  --organism ORGANISM :: taxonomic term (see below); default is $ORGANISM
+  --organism ORGANISM  :: taxonomic term (see below); default is $ORGANISM
   --since ACCESSION_NUMBER  :: ignore GSE records with GSE accession numbers less than or equal to ACCESSION_NUMBER.
-  -k | --keep :: keep temporary files
-  -q | --quiet :: passed to wget
-  -nv | --no-verbose :: passed to wget
-  -v | --verbose :: verbose mode
+  --series-type TYPE   :: retain only those GSE records of the specified series type (see below)
+  --series-types FILE  :: retain only those GSE records with a series type equal to one of the types in the file FILE (one TYPE per line)
+  -k  | --keep         :: keep temporary files
+  -q  | --quiet        :: passed to wget
+  -nv | --no-verbose   :: passed to wget
+  -v  | --verbose      :: verbose mode
 
 Notes:
   * ORGANISM may in principle be any NCBI taxonomic term
@@ -58,6 +62,13 @@ Notes:
   * Only one of --include and --exclude may be specified.
   * If "--include FILE" is specified then "--download DIRECTORY" should also be specified.
   * "--since GSEn" will be interpreted as "--since n"
+
+Specifying a series type is equivalent to the GEO query term "TYPE"[Dataset Type].
+Illustrative valid values of TYPE are:
+ * Expression profiling by array
+ * Genome variation profiling by genome tiling array
+ * Expression profiling by genome tiling array
+ * Genome variation profiling by array
 
 Example:
 
@@ -115,7 +126,16 @@ do case "$1" in
       -q | --quiet ) QUIET=-q
            shift
            ;;
-
+      --by-array ) SERIESTYPE="Expression profiling by array"
+	    shift
+	    ;;
+      --series-type ) SERIESTYPE="$2"
+	    shift 2
+	    ;;
+      --series-types ) SERIESFILE="$2"
+	    check_exists "$SERIESFILE"
+	    shift 2
+	    ;;
       -nv | --no-verbose ) NV=-nv
            shift
            ;;
@@ -135,6 +155,11 @@ done
 if [ -n "$INCLUDE" -a -n "$EXCLUDE" ] ; then
   echo $BN: only one of --include and --exclude may be specified.
   exit 1
+fi
+
+if [ -n "$SERIESTYPE" -a  -n "$SERIESFILE" ] ; then
+   echo "$BN: at most one of the following options may be specified: --series-type, --series-types, --by-array"
+   exit 1
 fi
 
 if [ -n "$INCLUDE" -a -z "$DOWNLOAD" ] ; then
@@ -176,7 +201,6 @@ function verbose {
   fi
 }
 
-
 mkdir -p "$TMP"
 
 OUT=$TMP/GSE_list
@@ -200,6 +224,34 @@ OUT=$TMP/GSE_list
 
 TERM="$ORGANISM[organism]+AND+gse[Entry+Type]"
 
+# GTYP is a synonym for "DataSet Type"
+if [ -n "$SERIESTYPE" ] ; then
+  SERIESTYPES="${SERIESTYPE}[GTYP]"
+fi
+
+count=0
+if [ -n "$SERIESFILE" ] ; then
+    # DO NOT PIPE AS THAT CREATES A SUBPROCESS
+    while read line ; do
+      count=$((count + 1))
+      if [ $count -gt 20 ] ; then
+	  echo "$BN: no more than 20 types may be specified"
+	  exit 2
+      fi
+      if [ -z "$SERIESTYPES" ] ; then
+	  SERIESTYPES="\"${line}\"[GTYP]"
+      else
+	  SERIESTYPES="$SERIESTYPES+OR+\"${line}\"[GTYP]"
+      fi
+    done < "$SERIESFILE"
+fi
+
+if [ -n "$SERIESTYPES" ] ; then
+  TERM="$TERM+AND+($SERIESTYPES)"
+fi
+
+verbose TERM="$TERM"
+
 function UIDS {
   # GEO Datasets return the "GDS ID"
   wget $NV $QUIET -O $OUT \
@@ -213,9 +265,7 @@ function UIDS {
 # Example: cat - | exclude FILE
 # Global: TMP
 function exclude {
-  sort "$1" > $TMP/sort
-  sort | comm -23 - "$TMP/sort"
-  /bin/rm $TMP/sort
+  sort | comm -23 - <(sort "$1")
 }
 
 
