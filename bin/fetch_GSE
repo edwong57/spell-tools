@@ -6,9 +6,10 @@
 
 # For help: $0 --help
 
-VERSION=0.2.1
+VERSION=0.2.2
 # New in 0.2: --series-type, --series-types, --by-array
 # New in 0.2.1: default ORGANISM changed
+# New in 0.2.2: --since YYYY/MM ; --minimum N
 
 # Default organism:
 ORGANISM=Saccharomyces+cerevisiae
@@ -41,22 +42,31 @@ If the -o option is not specified, GSE record identifiers are written
 to stdout.
 
 Options:
+
+  -h | --help          :: this help
   -o FILE              :: file into which the selected GSE record identifiers are to be written
-  --by-array           :: equivalent to: --series-type "Expression profiling by array"
-  --include FILE       :: file of GSE record ids to include, one per line (lines beginning with # are ignored)
-  --exclude FILE       :: file of GSE record ids to exclude, one per line
-  --download DIRECTORY :: the directory into which GSE record files are to be downloaded
-  --organism ORGANISM  :: taxonomic term (see below); default is $ORGANISM
-  --since ID           :: if ID is an integer, then ignore GSE records with GSE accession  
-                          numbers less than or equal to ID; similarly if ID is a GSE record
-                          identifier (see example).
-  --series-type TYPE   :: retain only those GSE records of the specified series type (see below)
-  --series-types FILE  :: retain only those GSE records with a series type equal to one of the
-                          types in the file FILE (one TYPE per line)
   -k  | --keep         :: keep temporary files
   -q  | --quiet        :: passed to wget
   -nv | --no-verbose   :: passed to wget
   -v  | --verbose      :: verbose mode
+  --include FILE       :: file of GSE record ids to include, one per line (lines beginning with # are ignored)
+  --exclude FILE       :: file of GSE record ids to exclude, one per line
+  --download DIRECTORY :: the directory into which GSE record files are to be downloaded
+
+Criteria:
+  --by-array           :: equivalent to: --series-type "Expression profiling by array"
+  --organism ORGANISM  :: taxonomic term (see below); default is $ORGANISM
+  --since ID           :: if ID is an integer, then ignore GSE records with GSE accession  
+                          numbers less than or equal to ID; similarly if ID is a GSE record
+                          identifier (see example below)
+  --since YEAR/ | YEAR/MO :: ignore GSE records with a publication date earlier than the specified
+                          year (or year and month); YEAR should be a four-digit year,
+                          and MO should be a two-digit month (see example below).
+  --series-type TYPE   :: retain only those GSE records of the specified series type (see below)
+  --series-types FILE  :: retain only those GSE records with a series type equal to one of the
+                          types in the file FILE (one TYPE per line)
+  --minimum N          :: minimum number of samples (Series_sample_ids)
+
 
 Notes:
   * ORGANISM may in principle be any NCBI taxonomic term
@@ -66,6 +76,7 @@ Notes:
   * Only one of --include and --exclude may be specified.
   * If "--include FILE" is specified then "--download DIRECTORY" should also be specified.
   * "--since GSEn" will be interpreted as "--since n"
+  * "--since 2005/01" includes January 2005.
   * wget is run with the -N option to avoid unnecessary downloads.
 
 Specifying a series type is equivalent to the GEO query term "TYPE"[Dataset Type].
@@ -75,9 +86,15 @@ Illustrative valid values of TYPE are:
  * Expression profiling by genome tiling array
  * Genome variation profiling by array
 
-Example:
+Examples:
 
+# To fetch GSE records with GSE ids greater than 1986:
 $BN --download . --since GSE1986
+
+# The following are equivalent methods for fetching GSE ids published since the beginning of 2009:
+$BN --since 2009/01
+$BN --since 2009/
+
 
 References:
   * http://www.ncbi.nlm.nih.gov/geo/info/qqtutorial.html (Querying GEO Datasets)
@@ -104,6 +121,9 @@ do case "$1" in
       -o ) OUTFILE="$2"
            shift 2
            ;;
+      --minimum ) MINIMUM="$2"
+           shift 2
+           ;;
       --include ) INCLUDE="$2"
 	   check_exists "$2"
            shift 2
@@ -115,8 +135,19 @@ do case "$1" in
       --download ) DOWNLOAD="$2"
            shift 2
            ;;
-      --since ) SINCE="$2"
-	   SINCE="${SINCE/#GSE/}"
+      --since )
+           if [[ "$2" =~ "/" ]] ; then
+	       if [[ "$2" =~ "^[0-9]+/[0-9][0-9]$" ]] ; then
+	         SINCEDATE="$2"
+               elif  [[ "$2" =~ "^[0-9]+/$" ]] ; then
+	         SINCEDATE="$2"01
+	       else
+		 echo "$BN: YEAR/MONTH should be specified as YYYY/MM or YYYY/"
+		 exit 1
+               fi
+	   else
+	     SINCE="${2/#GSE/}"
+           fi
            shift 2
            ;;
       --organism ) ORGANISM="$2"
@@ -252,7 +283,18 @@ if [ -n "$SERIESFILE" ] ; then
 fi
 
 if [ -n "$SERIESTYPES" ] ; then
-  TERM="$TERM+AND+($SERIESTYPES)"
+  TERM="${TERM}+AND+($SERIESTYPES)"
+fi
+
+if [ -n "$SINCEDATE" ] ; then
+    RANGE=$((1 + $(date "+%Y") ))
+    RANGE="${SINCEDATE}:$RANGE/01[PDAT]"
+    TERM="${TERM}+AND+$RANGE"
+fi
+
+if [ -n "$MINIMUM" ] ; then
+    # NSAM = Number of Samples
+    TERM="${TERM}+AND+${MINIMUM}:100000[NSAM]"
 fi
 
 verbose TERM="$TERM"
@@ -291,7 +333,7 @@ function map {
   
   cat $OUT.sorted | while read -r ID etc ; do
 
-    if [[ -n "$TEST" && $count -ge $TEST ]] ; then break ; fi
+    if [[ -n "$TEST" && "$count" -ge "$TEST" ]] ; then break ; fi
 
     # ID=200027539
     # The entire page:
