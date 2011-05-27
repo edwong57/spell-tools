@@ -1,0 +1,538 @@
+#!/bin/bash
+# Copyright (C) 2011 peak@princeton.edu
+# License: Creative Commons Attribution-NonCommerical-ShareAlike 3.0 Unported (CC BY-NC-SA 3.0)
+# See http://creativecommons.org/licenses/by-nc/3.0/
+# Attribution shall include the copyright notice above.
+
+# For help: $0 --help
+
+VERSION=0.0.7
+
+BN=`basename $0`
+# In case script is called using source: 
+DN=$(dirname $(readlink -f ${BASH_SOURCE[0]}))
+
+TMP=/tmp/$USER
+ECHO=
+
+function help {
+cat <<EOF
+Syntax: $BN [OPTIONS] file ...
+
+Given a set of GSE "soft" files, this script can be used: 
+  1) to select those which satisfy certain constraints;
+  2) to remove, move, or gzip those that do not satisfy the constraints.
+
+Unless one of the actions (--remove, --move, or --gzip) is specified,
+the filenames of those files which satisfy the constraints are written
+to the file specified by the -o option or to stdout.
+
+In this documentation, the term "GSE soft file" refers to a (possibly
+gzipped) GEO "series record" file.  Normally such files have names of
+the form GSEn_family.soft (or GSEn_family.soft.gz if compressed),
+where n is the GSE accession number, but this script allows any file
+names to be used on the command line, or in the inclusion or exclusion
+lists specified respectively using the --include or exclude options.
+
+The term "GSE record identifier" refers to a string (such as GSE18) of
+the form GSEn where n is a GSE accession number.  If the file names
+used on the command line (or in the include file) are given in
+standard form, then then the exclusion list may consist of GSE record
+identifiers.
+
+General options:
+
+  In the following, "FILE" may be a file, an input stream, or - for stdin.
+
+  -h  | --help         :: this help
+  -v  | --verbose      :: verbose mode; in this mode, informational
+                          messages are written to stdout.
+  -o OUTFILE           :: file into which the selected file names are to be written
+  --include FILE       :: file of GSE record ids to include, one per line
+                          (lines beginning with # are ignored)
+  --exclude FILE       :: exclude files with GSE record ids specified in
+                          FILE (one per line). Besides comments (lines
+                          beginning with #), the file should consist entirely
+                          of filenames, of GSE record identifiers
+                          (GSEnnn), or of integers (nnn).  In the last
+                          two cases, files named GSEnnn_family.soft
+                          and GSEnnn_family.soft.gz will be excluded
+                          where nnn is the specified integer.
+
+Options specifying selection criteria:
+
+  --organism ORGANISM  :: taxonomic term (see below); default is $ORGANISM
+  --public YYYY MM DD  :: select files with a "public" date on or after the specified date
+  --since YEAR | YEAR/ | YEAR/MO :: ignore GSE records with a "Series_status" 
+                          date earlier than the specified year (or
+                          year and month); YEAR should be a four-digit
+                          year, and MO should be a two-digit month
+                          (see example below).
+  --minimum N          :: minimum number of samples (Series_sample_ids)
+  --by-array           :: equivalent to: --series-type "Expression profiling by array"
+  --series-type TYPE   :: retain only those GSE records of the specified series type (see below)
+  --series-types FILE  :: retain only those GSE records with a series type equal to one of the
+                          types in the file FILE (one TYPE per line)
+
+Options specifying actions:
+
+  --gzip               :: gzip the files that do NOT satisfy the constraints
+  --move DIR           :: move the files that do NOT satisfy the constraints into DIR
+  --remove             :: remove the files that do NOT satisfy the constraints
+
+
+Notes:
+  * ORGANISM must either be specified exactly as it appears in the
+    Platform_organism field of the GSE soft file, or as a regular
+    expression. In the latter case, selection will be made based on a
+    match with the value specified in that field.  See
+    http://www.ncbi.nlm.nih.gov/Taxonomy
+  * If --include is specified then files specified on the command line
+    will be ignored.
+  * Both --include and --exclude may be specified.
+
+Series Types:
+    Specifying a series type is equivalent to the GEO query term
+    "TYPE"[Dataset Type].  Illustrative valid values of TYPE are:
+
+    * Expression profiling by array
+    * Genome variation profiling by genome tiling array
+    * Expression profiling by genome tiling array
+    * Genome variation profiling by array
+
+Performance considerations:
+  * Selection proceeds from left to right in the order in which the selection criteria
+    are specified.
+  * zgrep is used for gzipped file, so it may be better to gunzip them first.
+
+
+Examples:
+
+The following two examples are equivalent. Each selects from the
+specified files those that were published on or after Jan 1, 2009,
+having at least 6 arrays, and that are not identified in the file
+expression.GSEids:
+
+* $BN --since 2009 --minimum 6 --exclude expression.GSEids *.soft
+* $BN --public 2009 01 1 --minimum 6 --exclude expression.GSEids *.soft
+
+See also: fetch_GSE
+
+References:
+  * http://www.ncbi.nlm.nih.gov/geo/info/qqtutorial.html (Querying GEO Datasets)
+  * http://www.ncbi.nlm.nih.gov/Taxonomy (Taxonomic terms admissible as ORGANISM)
+
+Version: $BN $VERSION
+
+See source for copyright and licensing details.
+EOF
+}
+
+function die {
+    echo "$BN: $@" >&2
+    if [ "$1" = cleanup ] ; then cleanup ; fi
+    exit 1
+}
+
+function warning {
+    echo "$BN: $@" >&2
+}
+
+function verbose {
+  if [ "$VERBOSE" ] ; then
+    echo "$*"
+  fi
+}
+
+# Allow "-" for stdin
+function check_exists {
+  if [ "$1" = - ] ; then return; fi
+  if [ -z "$1" -o ! -r "$1" ] ; then
+    die "$1 cannot be read"
+  fi
+}
+
+function exit_if_ACTION {
+  if [ -n "$ACTION" ] ; then 
+    die "$BN: an action has already been specified: $ACTION"
+  fi
+}
+
+while [ "$1" ]
+do case "$1" in
+      -h | --help ) help
+           exit
+           ;;
+      -o ) OUTFILE="$2"
+           shift 2
+           ;;
+      --minimum ) MINIMUM="$2"
+           shift 2
+           ;;
+      --include ) INCLUDE="$2"
+	   check_exists "$2"
+           shift 2
+           ;;
+      --exclude ) EXCLUDE="$2"
+	   check_exists "$2"
+           shift 2
+           ;;
+      --public ) YEAR="$2"
+	    MM="$3"
+	    DD="$4"
+           shift 4
+           ;;
+      --since )
+           YMD=( `echo "$2/0/0" | sed 's,/, ,g'` )
+	   YEAR=${YMD[0]}
+	   MM=${YMD[1]}
+	   DD=${YMD[2]}
+           shift 2
+           ;;
+      --remove ) 
+           exit_if_ACTION
+           ACTION=/bin/rm
+           shift 
+           ;;
+      --gzip ) 
+           exit_if_ACTION
+           ACTION=gzip
+	   shift
+	   ;;
+      --move ) 
+           exit_if_ACTION
+	   ACTION=/bin/mv
+           DIR="$2"
+           mkdir -p "$DIR" || die "$BN: unable to mkdir $DIR"
+           shift 2
+           ;;
+      --organism ) ORGANISM="$2"
+           shift 2
+           ;;
+      --test ) TEST="$2"
+	   ECHO=echo
+           shift 2
+           ;;
+      -k | --keep ) KEEP=1
+           shift
+           ;;
+      -q | --quiet ) QUIET=-q
+           shift
+           ;;
+      --by-array ) SERIESTYPE="Expression profiling by array"
+	   shift
+	   ;;
+      --series-type ) SERIESTYPE="$2"
+	   shift 2
+	   ;;
+      --series-types ) SERIESFILE="$2"
+	   check_exists "$SERIESFILE"
+	   shift 2
+	   ;;
+      -v | --verbose ) VERBOSE=1
+           shift
+           ;;
+      -* ) die "$BN: unknown option $1"
+           ;;
+      *  ) break
+           ;;
+  esac
+done
+
+
+# Preliminary check of options:
+if [ -n "$INCLUDE" -a $# -gt 0 ] ; then
+  warning "WARNING: the --include option has been specified and so files specified on the command line will be ignored."
+fi
+
+# It is not an error to specify the same file for inclusion and exclusion, but issue a warning.
+if [ -n "$INCLUDE" -a "$INCLUDE" = "$EXCLUDE" ] ; then
+  warning  "the --include and --exclude files are the same"
+  exit 0
+fi
+
+if [ -n "$SERIESTYPE" -a  -n "$SERIESFILE" ] ; then
+   die "$BN: at most one of the following options may be specified: --series-type, --series-types, --by-array"
+fi
+
+if [ "$TEST" = -1 ] ; then
+  TEST=10000
+  VERBOSE=1
+  KEEP=1
+  verbose TEST=$TEST
+  verbose TMP=$TMP
+  verbose KEEP=$KEEP
+fi
+
+function continuep {
+   local PROMPT="$1"
+   if [ -z "$1" ] ; then
+      PROMPT="Continue? [yN]"
+   fi
+   read -p "$PROMPT " x
+   case "$x" in
+     y | Y | yes | YES ) return
+     ;;
+   esac
+   exit
+}
+
+# Set GREP based on file suffix
+# Global: file
+function set-GREP {
+  local f="$1"
+  if [ -z "$f" ] ; then f="$file" ; fi
+  if [ "$f" = "${f/.gz}" ] ; then GREP=grep ; else GREP=zgrep ; fi
+}
+
+# A filter to exclude items in $1
+# That is: output = stdin MINUS $1
+# Neither stdin nor $1 need be sorted.
+# Example: cat - | exclude FILE
+function exclude {
+  sort | comm -23 - <(sort "$1")
+}
+
+function initialize {
+  local f
+  for f 
+  do
+    if [ -r "$f" ] ; then /bin/rm "$f" ; fi
+    touch "$f"
+  done
+}
+
+function select-by-organism {
+  local in="$1"
+  local file
+  # DO NOT PIPE AS THAT CREATES A SUBPROCESS
+  while read file
+  do
+    set-GREP
+    $GREP -m 1 -q "^!Platform_organism *= *$ORGANISM" "$file" && echo "$file"
+  done < $in
+}
+
+# read from $1
+# Global: MINIMUM
+function select-by-minimum {
+  local in="$1"
+  local N file
+  if [ -z "$MINIMUM" -o "$MINIMUM" -lt 1 ] ; then cat "$in" ; return ; fi
+  # DO NOT PIPE AS THAT CREATES A SUBPROCESS
+  while read file
+  do
+    set-GREP
+    N=$($GREP '^!Series_sample_id' "$file" | sort -u | wc -l)
+    if [ $N -ge $MINIMUM ] ; then
+      echo "$file"
+    fi
+  done < $in
+}
+
+# Series_status = Public on Mon DD YYYY
+# WE DO NOT INSIST ON 'Public' but we do assume Mon DD YYYY are the 3rd through 5th tokens after the "="
+# Global: YEAR MM DD
+function select-by-series-status {
+  local in="$1"
+  local file
+  if [ -z "$YEAR" ] ; then return ; fi
+  if [ -z "$MM"   ] ; then MM=0   ; fi
+  if [ -z "$DD"   ] ; then DD=0   ; fi
+  verbose YEAR=$YEAR MM=$MM DD=$DD
+  # DO NOT PIPE AS THAT CREATES A SUBPROCESS
+  while read file
+  do
+    set-GREP 
+    $GREP '^!Series_status =' "$file" | sed -e 's/^[^=]*=//' |\
+     awk -v year="$YEAR" -v month="$MM" -v day="$DD" -v file="$file" -v verbose="$VERBOSE" '
+       BEGIN { 
+         mon["Jan"]=1; mon["Feb"]=2; mon["Mar"]=3; mon["Apr"]=4; mon["May"]=5; mon["Jun"]=6
+         mon["Jul"]=7; mon["Aug"]=8; mon["Sep"]=9; mon["Oct"]=10;mon["Nov"]=11;mon["Dec"]=12 
+       }
+       # Public on Mon DD YYYY
+       # { if (verbose) { print > "/dev/stderr" } }
+       $1 != "Public" { if (verbose) { print "WARNING:", file ": " $0 > "/dev/stderr"; next } }
+       year > $5 { next }
+       { m=mon[$3] }
+       year == $5 && month > m { next }
+       year == $5 && month == m &&  day > $4 { next }
+       { print file } '
+  done < $in
+}
+
+# Syntax: fiddle [input]
+# Besides comments, input should consist of lines of one of the
+# following forms, where nnn is an integer.  In each case, both
+# FILENAME and FILENAME.gz are emitted for the indicated FILENAME:
+#     FORM        FILENAME
+#     ----------- ------------------
+#     nnn         GSEnnn_family.soft
+#     GSEnnn      GSEnnn_family.soft
+#     filename.gz filename
+#     filename    filename
+# Commented lines (#) are ignored.
+# If "input" is not specified or if it is specified as -, input is taken from stdin.
+# Global: OUT
+function fiddle {
+    local in="$1"
+    local first
+    # Remove comments, leading and trailing blanks, blank lines ...
+    grep -v ' *#' $in | sed -e 's/^ *//' -e 's/ *$//' | grep -v '^$' > $OUT.tmp
+    in=$OUT.tmp
+    first=$(head -n 1 "$in")
+    if [[ "$first" =~ "^[0-9]+$" ]] ; then
+	egrep "^[0-9]+$" "$in" | sed 's/\(.*\)/GSE\1_family.soft\nGSE\1_family.soft.gz/'
+    elif [[ "$first" =~ "^GSE[0-9]+$" ]] ; then
+	egrep "^GSE[0-9]+$" "$in" | sed 's/\(.*\)/\1_family.soft\n\1_family.soft.gz/'
+    elif [[ "$first" =~ "\.gz$" ]] ; then
+	grep "\.gz$" "$in" | sed 's/^\(.*\)\.gz$/\1\n\1.gz/'
+    else
+        # appending .gz twice is not so bad
+	cat "$in" | sed 's/^\(.*\)$/\1\n\1.gz/'
+    fi
+    /bin/rm $OUT.tmp || warning WARNING: internal error: unable to rm $out.tmp
+}
+
+# Echo regular expressions suitable for use with "grep --file _"
+# Global SERIESFILE SERIESTYPE
+function setup-series-type {
+  local RE="sed -e 's/^ *//' -e 's/ *$//' -e 's/^/^!Series_type = /'"
+  if [ -n "$SERIESFILE" ] ; then
+    eval $RE "$SERIESFILE"
+  elif [ -n "$SERIESTYPE" ] ; then
+    echo "${SERIESTYPE}" | eval $RE
+  fi
+}
+
+# Global: OUT
+function select-by-series-type {
+  local in="$1"
+  local file
+  setup-series-type > $OUT.seriestype
+  # DO NOT PIPE AS THAT CREATES A SUBPROCESS
+  while read file
+  do
+    # Luckily for us, the --file option of grep uses disjunction:
+    set-GREP 
+    $GREP -q --file $OUT.seriestype "$file" && echo $file
+  done < $in
+}
+
+# Syntax: action ACTION FILENAME [ARG]
+# Recognized ACTION values: see the case statement
+function action {
+    local file
+    local action=$1
+    local filename=$2
+    local arg=$3
+    while read file
+    do
+	case "$action" in
+	    gzip | rm | /bin/rm )
+		$ECHO $action "$file"
+		;;
+            mv | /bin/mv )
+		$ECHO $action "$file" $arg
+		;;
+	    * ) warning "WARNING: internal error: unrecognized action $action -- skipping this step"
+		;;
+	esac
+    done < "$filename"
+}
+
+function cleanup {
+  if [ -z "$KEEP" ] ; then
+    if [ -d "$TMP" ] ; then
+      $ECHO /bin/rm $OUT.*
+    fi
+  else
+    verbose "$BN: temporary files are in $TMP"
+  fi
+}
+
+mkdir -p "$TMP" || die "unable to mkdir $TMP"
+
+OUT=$TMP/select_GSE.$$
+
+# Filenames:
+# We may have to take action on files that are NOT selected, 
+# so keep the original list together in $OUT.listing:
+
+initialize $OUT.listing
+
+if [ -n "$INCLUDE" ] ; then
+    /bin/cp "$INCLUDE"  $OUT.listing || die Unable to copy the file specified with --include.
+else
+  for f
+  do
+    if [ ! -r "$f" ] ; then warning "WARNING: ignoring file $f as it is unreadable" ; fi
+    echo "$f" >> $OUT.listing
+  done
+fi
+
+N=$(cat $OUT.listing | wc -l)
+verbose Number of files under consideration: $N
+if [ $N = 0 ] ; then cleanup; exit; fi
+
+/bin/cp $OUT.listing $OUT.in
+
+
+# Maybe exclude some of the files:
+if [ -n "$EXCLUDE" ] ; then
+  verbose "EXCLUDE=$EXCLUDE"
+  fiddle "$EXCLUDE" > $OUT.exclude
+  cat $OUT.in | exclude $OUT.exclude > $OUT.out
+  /bin/rm $OUT.exclude
+  /bin/mv $OUT.out $OUT.in
+  N=$(cat $OUT.in | wc -l)
+  verbose Number of files remaining: $N
+  if [ $N = 0 ] ; then cleanup ; exit;  fi
+fi
+
+# For each criterion, select from $OUT.in:
+
+if [ -n "$ORGANISM" ] ; then
+  verbose "select-by-organism $ORGANISM"
+  select-by-organism $OUT.in > $OUT.out
+  /bin/mv $OUT.out $OUT.in
+fi
+
+# Public on Mon DD YYYY
+if [ -n "$YEAR" ] ; then
+  verbose select-by-series-status $YEAR $MM $DD
+  select-by-series-status $OUT.in > $OUT.out
+  /bin/mv $OUT.out $OUT.in
+fi
+
+if [ -n "$MINIMUM" ] ; then
+  verbose select-by-minimum $MINIMUM
+  select-by-minimum $OUT.in > $OUT.out
+  /bin/mv $OUT.out $OUT.in
+fi
+
+if [ -n "$SERIESFILE" -o -n "$SERIESTYPE" ] ; then
+  verbose select-by-series-type
+  select-by-series-type $OUT.in > $OUT.out
+  if [ -n "$VERBOSE" ] ; then 
+      verbose Regular expressions for included series types:
+      cat $OUT.seriestype
+  fi
+  /bin/mv $OUT.out $OUT.in
+fi
+
+# Actions to be performed on the unselected files
+if [ -n "$ACTION" ] ; then
+  cat $OUT.listing | exclude $OUT.in > $OUT.action
+  action $ACTION $OUT.action $DIR
+  /bin/rm $OUT.action
+fi
+
+# Output:
+if [ -z "$OUTFILE" ] ; then
+   cat $OUT.in
+else
+   mv $OUT.in "$OUTFILE" || warning "WARNING: unable to mv $OUT.in to the specified output file, $OUTFILE"
+fi
+
+cleanup

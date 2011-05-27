@@ -6,8 +6,8 @@
 
 # For help: $0 --help
 
-VERSION=0.2.2
-# New in 0.2: --series-type, --series-types, --by-array
+VERSION=0.2.3
+# Newdefau in 0.2: --series-type, --series-types, --by-array
 # New in 0.2.1: default ORGANISM changed
 # New in 0.2.2: --since YYYY/MM ; --minimum N
 
@@ -42,13 +42,12 @@ If the -o option is not specified, GSE record identifiers are written
 to stdout.
 
 Options:
-
-  -h | --help          :: this help
-  -o FILE              :: file into which the selected GSE record identifiers are to be written
+  -h  | --help         :: this help
   -k  | --keep         :: keep temporary files
   -q  | --quiet        :: passed to wget
   -nv | --no-verbose   :: passed to wget
   -v  | --verbose      :: verbose mode
+  -o    FILE           :: file into which the selected GSE record identifiers are to be written
   --include FILE       :: file of GSE record ids to include, one per line (lines beginning with # are ignored)
   --exclude FILE       :: file of GSE record ids to exclude, one per line
   --download DIRECTORY :: the directory into which GSE record files are to be downloaded
@@ -88,12 +87,16 @@ Illustrative valid values of TYPE are:
 
 Examples:
 
-# To fetch GSE records with GSE ids greater than 1986:
-$BN --download . --since GSE1986
+* To download all GSE files for the default organism provided that the
+  GSE ids are greater than 1986 and that there are at least 6 samples:
 
-# The following are equivalent methods for fetching GSE ids published since the beginning of 2009:
-$BN --since 2009/01
-$BN --since 2009/
+  $BN --download . --since GSE1986 --minimum 6
+
+* The following are equivalent methods for fetching GSE ids published
+  since the beginning of 2009:
+
+  $BN --since 2009/01
+  $BN --since 2009/
 
 
 References:
