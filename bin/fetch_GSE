@@ -7,7 +7,7 @@
 # For help: $0 --help
 
 VERSION=0.2.3
-# Newdefau in 0.2: --series-type, --series-types, --by-array
+# New in 0.2: --series-type, --series-types, --by-array
 # New in 0.2.1: default ORGANISM changed
 # New in 0.2.2: --since YYYY/MM ; --minimum N
 
