@@ -23,7 +23,7 @@ ARGS:
    0 - pcl file to impute - pathname or filename
    1 - info file (aka configuration file - often GSEnnn.info or allInfo.txt)
    2 - path to KNN impute program
-   3 - output file
+   3 - output filename
 
 Options:
    -v | --verbose :: verbose (to stderr)
@@ -44,48 +44,64 @@ EOH
 end
 
 
+### FUNCTIONS
+def linecount(filename)
+  # count = %x{wc -l < #{filename}}.to_i
+  count = File.foreach(filename).count
+end
+
+### VARIABLES
 #Important configuration column indices (IO=0):
 GDSID_col = 1
 numChan_col = 20
 log_col = 21
 
-#Read the configuration file and locate the needed info
+### Read the configuration file and locate the needed info
 
 # First try: assume the info file is in "standard format"
 
 filename = File.basename(ARGV[0])
-found = standard = numChan = logged = nil
-row=0
+GDSID = found = standard = numChan = logged = nil
 
-IO.foreach(ARGV[1]) do |line|
-  row += 1
-  line.chomp!
-  parts = line.split("\t")
-  if row == 1 and parts[GDSID_col] == "DatasetID"
-    if parts[numChan_col] == "#Channels" and parts[log_col] == "logged"
+# If GDSID cannot be discerned from the filename, then look in the info file directly if it has just two lines:
+
+i=filename.index("_") || filename.index(".")
+
+if i
+  GDSID = filename.slice(0, i)
+elsif 2 == linecount(ARGV[1])
+  row=0
+  IO.foreach(ARGV[1]) do |line|
+    row += 1
+    line.chomp!
+    parts = line.split("\t")
+    if row == 1 and parts[GDSID_col] == "DatasetID"
       standard = 1
-    elsif verbose
-      $stderr.print "parts[GDSID_col]:", parts[GDSID_col], "\n"
-      $stderr.print "parts[numChan_col]:", parts[numChan_col], "\n"
-      $stderr.print "parts[log_col]:", parts[log_col], "\n"
+      if parts[numChan_col] == "#Channels" and parts[log_col] == "logged"
+        standard = 2
+      elsif verbose
+        $stderr.print "parts[GDSID_col]:", parts[GDSID_col], "\n"
+        $stderr.print "parts[numChan_col]:", parts[numChan_col], "\n"
+        $stderr.print "parts[log_col]:", parts[log_col], "\n"
+      end
     end
-  end
-  if row == 2
-    if standard
+    if row == 2 and standard
       GDSID=parts[GDSID_col]
       numChan = parts[numChan_col].to_i
       logged = parts[log_col].to_i
       found = 1
     end
   end
-  break if row > 2
+end
+
+unless GDSID
+  $stderr.puts "#{BN}: unable to determine GDSID from filename or info file"
+  exit 1
 end
 
 if !found
-# Second try:
-  GDSID = filename.slice(0, filename.index("."))
   if verbose
-    $stderr.print "Searching for GDSID=#{GDSID} based on filename\n"
+    $stderr.puts "Searching for GDSID=#{GDSID} based on filename"
   end
   IO.foreach(ARGV[1]) do |line|
     line.chomp!
@@ -100,14 +116,14 @@ if !found
 end
 
 if !found or !numChan or !logged
-  $stderr.print "#{BN}: unable to make sense of info file #{ARGV[1]}:\n"
+  $stderr.puts "#{BN}: unable to make sense of info file #{ARGV[1]}:"
   case found
   when 1
-    $stderr.print "GDSID in info file is #{GDSID}.\n"
+    $stderr.puts "GDSID in info file is #{GDSID}."
   when 2
-    $stderr.print "GDSID, which was computed from filename as #{GDSID}, was not found in info file.\n"
+    $stderr.puts "GDSID, which was computed from filename as #{GDSID}, was found in info file."
   else
-    $stderr.print "GDSID, which was computed from filename as #{GDSID}, was found in info file.\n"
+    $stderr.puts "GDSID, which was computed from filename as #{GDSID}, was not found in info file."
   end
   exit 1
 end
