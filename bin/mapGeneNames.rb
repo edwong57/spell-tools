@@ -1,52 +1,123 @@
 #!/usr/bin/env ruby
-# Copyright (C) 2007 Matt Hibbs
+
+# Copyright (C) 2007 Matt Hibbs and (C) 2011 Peter Koppstein
 # License: Creative Commons Attribution-NonCommerical-ShareAlike 3.0 Unported (CC BY-NC-SA 3.0)
 # See http://creativecommons.org/licenses/by-nc/3.0/
 # Attribution shall include the copyright notice above.
 
+# This is the Troilkatt version as of May 27, 2011 with changes by peak@princeton.edu including:
+#  - modifications to allow use with UTF-8 input using either Ruby 1.8 or 1.9
+#  - map=PATHNAME as alternative to "organism file"
 
 require 'set'
 
-if ARGV.length < 3
-	puts "ARGS:"
-	puts "0 - pcl file to map aliases from"
-	puts "1 - config file (often allInfo.txt)"
-	puts "2 - organism file, containing name in column 1, path to alias map in column 2"
-  puts "3 - output file"
-	puts "Creates a new file with \".map\" appended that contains a new pcl"
-	puts "file with gene names mapped to standard symbols"
-	exit 0
+BN = File.basename($0)
+
+case ARGV[0]
+when "-v", "--verbose"
+  @@verbosity = true
+  ARGV.shift
+else
+  @@verbosity = false
 end
 
-#Read the organism information file
+if ARGV.length < 3
+  print <<-EOH
+Syntax: #{BN} [-v | --verbose] ARGS
+ARGS:
+   0 - input pcl filename, which must be prefixed with "GDSID_" or "GDSID." where GDSID is, for example, GSE217
+   1 - info file (aka configuration file - often GSEnnn.info or allInfo.txt)
+   2 - the pathname of the organism file, or "map=" followed immediately by the pathname of the map file (see below)
+   3 - output file
+
+Options:
+   -v | --verbose :: verbose (to stderr)
+
+This script creates a new pcl file by copying the input pcl file after mapping the gene names in it to standard symbols.
+
+
+If specified, the organism file should consist of rows of the form
+
+ORGANISM<tab>PATHNAME
+
+where:
+   ORGANISM is the organism name (e.g. 'Saccharomyces cerevisiae') as it appears in the .info file for this GDSID
+   PATHNAME is the pathname of the alias map file for ORGANISM
+
+The alias map file should consist of rows of the form:
+  G S1|S2|....|Sn
+
+where G is a gene name and the S are the corresponding standard symbols.
+(Each input row for G results in n output rows.)
+
+The .info file is consulted for the value of ORGANISM for this GDSID.
+
+Example:
+  #{BN} GSE13219.knn.pcl GSE13219.sfp.info map=sce.map
+
+Version: 2011.06.02
+
+EOH
+
+exit 0
+end
+
+
+### FUNCTIONS
+def verbose(*msgs)
+  if @@verbosity
+    msgs.each { |msg| $stderr.puts msg }
+  end
+end
+
+### VARIABLES
+#Important configuration column indices (IO=0):
+GDSID_col = 1
+org_col = 2
+
+###Read the configuration file and locate the needed info
+filename = File.basename(ARGV[0])
+
+GDSID = filename.slice(0, filename.index("_") || filename.index("."))
+
+verbose("GDSID=#{GDSID}")
+
+org = nil
+
+# WARNING: The combination of Ruby1.9 and UTF8 requires care!
+# Ruby1.9: File.open(ARGV[1], :encoding => "UTF-8").each_line do |line|
+# Ruby1.8: IO.foreach(ARGV[1]) do |line|
+begin
+  fd = File.open(ARGV[1], :encoding => "UTF-8")
+rescue
+  fd = File.open(ARGV[1] )
+end
+
+fd.each_line do |line|
+	line.chomp!
+        # verbose(line)
+	parts = line.split("\t")
+	if parts[GDSID_col] == GDSID
+		org = parts[org_col]
+	end
+end
+
+verbose("org=#{org}")
+
+#Determine the mapping file:
+
 orgs = Hash.new
-IO.foreach(ARGV[2]) do |line|
+if ARGV[2].start_with?("map=")
+  orgs[org] = ARGV[2].sub("map=","")
+  verbose("orgs[#{org}]=#{orgs[org]}")
+else
+  IO.foreach(ARGV[2]) do |line|
 	line.chomp!
 	if line.slice(0,1) != "#"
 		parts = line.split("\t")
 		orgs[parts[0]] = parts[1]
 	end
-end
-
-#Important configuration columns
-GDSID_col = 1
-org_col = 2
-
-#Read the configuration file and locate the needed info
-if ARGV[0].rindex("/") != nil
-  filename = ARGV[0].slice(ARGV[0].rindex("/") + 1, ARGV[0].length)
-else
-  filename = ARGV[0]
-end
-GDSID = filename.slice(0, filename.index("."))
-
-org = nil
-IO.foreach(ARGV[1]) do |line|
-	line.chomp!
-	parts = line.split("\t")
-	if parts[GDSID_col] == GDSID
-		org = parts[org_col]
-	end
+  end
 end
 
 #If the organism is included in the list of mappings

@@ -4,23 +4,24 @@
 # See http://creativecommons.org/licenses/by-nc/3.0/
 # Attribution shall include the copyright notice above.
 
-# This is the Troilkatt version as of May 27, 2011 with minor tweaks by peak@princeton.edu 
+# This is the Troilkatt version as of May 27, 2011 with changes by peak@princeton.edu including:
+#  - modifications to allow use with UTF-8 input using either Ruby 1.8 or 1.9
 
 BN = File.basename($0)
 
 case ARGV[0]
 when "-v", "--verbose"
-  verbose = true
+  @@verbosity = true
   ARGV.shift
 else
-  verbose = false
+  @@verbosity = false
 end
 
 if ARGV.length < 2
   print <<-EOH
 Syntax: #{BN} [-v | --verbose] ARGS
 ARGS:
-   0 - pcl file to impute - pathname or filename
+   0 - pcl file to impute - pathname or filename, normally with the GDSID as prefix (see below)
    1 - info file (aka configuration file - often GSEnnn.info or allInfo.txt)
    2 - path to KNN impute program
    3 - output filename
@@ -32,13 +33,14 @@ This script will run KNNimpute on the pcl file.  Since KNNImputer
 does not perform correctly on raw single channel data, such data
 are first log transformed, then imputed, then exponentiated. 
 
-If the configuration file is not in "standard format" then the filename should
-have the GDSID as its period-delimited prefix.
+The file name of the input pcl file is normally prefixed with "GDSID_" or "GDSID." where
+GDSID is the GEO id, e.g. GSE13219.  However, if there is no _ or . in the filename, then if the info
+file is exactly two lines long, the GDSID will be taken from the info file.
 
 Example:
   #{BN} GSE13219.sfp.pcl GSE13219.sfp.info /usr/local/bin GSE13219.knn.pcl
 
-Version: 2011.06.02
+Version: 2011.06.04
 EOH
   exit 0
 end
@@ -48,6 +50,12 @@ end
 def linecount(filename)
   # count = %x{wc -l < #{filename}}.to_i
   count = File.foreach(filename).count
+end
+
+def verbose(*msgs)
+  if @@verbosity
+    msgs.each { |msg| $stderr.puts msg }
+  end
 end
 
 ### VARIABLES
@@ -61,17 +69,25 @@ log_col = 21
 # First try: assume the info file is in "standard format"
 
 filename = File.basename(ARGV[0])
-GDSID = found = standard = numChan = logged = nil
+found = standard = numChan = logged = nil
 
-# If GDSID cannot be discerned from the filename, then look in the info file directly if it has just two lines:
+# WARNING: The combination of Ruby1.9 and UTF8 requires care!
+# Ruby1.9: File.open(ARGV[1], :encoding => "UTF-8").each_line do |line|
+# Ruby1.8: IO.foreach(ARGV[1]) do |line|
+begin
+  fd = File.open(ARGV[1], :encoding => "UTF-8")
+rescue
+  fd = File.open(ARGV[1] )
+end
 
+# Determine GDSID from the filename if possible
 i=filename.index("_") || filename.index(".")
 
 if i
   GDSID = filename.slice(0, i)
 elsif 2 == linecount(ARGV[1])
   row=0
-  IO.foreach(ARGV[1]) do |line|
+  fd.each_line do |line|
     row += 1
     line.chomp!
     parts = line.split("\t")
@@ -79,10 +95,10 @@ elsif 2 == linecount(ARGV[1])
       standard = 1
       if parts[numChan_col] == "#Channels" and parts[log_col] == "logged"
         standard = 2
-      elsif verbose
-        $stderr.print "parts[GDSID_col]:", parts[GDSID_col], "\n"
-        $stderr.print "parts[numChan_col]:", parts[numChan_col], "\n"
-        $stderr.print "parts[log_col]:", parts[log_col], "\n"
+      else
+        verbose("parts[GDSID_col]: #{parts[GDSID_col]}",
+                "parts[numChan_col]: #{parts[numChan_col]}",
+                "parts[log_col]: #{parts[log_col]}")
       end
     end
     if row == 2 and standard
@@ -94,16 +110,14 @@ elsif 2 == linecount(ARGV[1])
   end
 end
 
-unless GDSID
-  $stderr.puts "#{BN}: unable to determine GDSID from filename or info file"
-  exit 1
+unless defined? GDSID
+  abort "#{BN}: unable to determine GDSID from filename or info file"
 end
 
 if !found
-  if verbose
-    $stderr.puts "Searching for GDSID=#{GDSID} based on filename"
-  end
-  IO.foreach(ARGV[1]) do |line|
+  verbose("Searching for GDSID=#{GDSID} based on filename")
+  fd.rewind
+  fd.each_line do |line|
     line.chomp!
     parts = line.split("\t")
     if parts[GDSID_col] == GDSID
