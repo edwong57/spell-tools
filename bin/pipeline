@@ -13,7 +13,7 @@
 # peak@princeton.edu 2011
 # For help: $0 --help
 
-VERSION=0.1.1
+VERSION=0.1.2
 
 # Requires the following:
 #  java, javac
@@ -133,7 +133,7 @@ parseEntrezGeneInfo will be made.
 Output Files:
 
 The following files that are produced in the SPELL_OUT directory are always retained:
-  {gse}.info {gse}.sfp.pcl {gse}.qdab
+  {gse}.info {gse}.sfp.pcl $gse.final.pcl {gse}.qdab
 
 The other .pcl files that are produced in this directory will only be kept
 if the --keep option is specified.
@@ -482,7 +482,7 @@ do
 
   if [ -z "$KEEP" ] ; then 
     # Remove the intermediate .pcl files
-    /bin/rm $gse.knn.pcl $gse.mapped.pcl $gse.mv.pcl $gse.final.pcl 
+    /bin/rm $gse.knn.pcl $gse.mapped.pcl $gse.mv.pcl
   fi
 
 done < "$TMPFILE"
