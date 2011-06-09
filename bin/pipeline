@@ -13,11 +13,12 @@
 # peak@princeton.edu 2011
 # For help: $0 --help
 
-VERSION=0.1.2
+VERSION=0.1.3
 
 # Requires the following:
 #  java, javac
-#  Sleipnir programs: KNNImputer, Distancer, Dat2Dab (on path or in $SPELL_TOOLS)
+#  Sleipnir programs: KNNImputer (on path or in $SPELL_TOOLS)
+#    (For qdab files, the Distancer and Dat2Dab are also required)
 #  scripts in $SPELL_TOOLS
 
 ECHO=
@@ -118,7 +119,7 @@ Options:
                      exists
   --keep          :: keep intermediate data files that would otherwise
                      be deleted (see below).
-
+  --qdab          :: produce .qdab file as well
 
 Notes:
 
@@ -181,7 +182,10 @@ do case "$1" in
       --skip ) SKIP=1
            shift
            ;;
-      -* ) echo "$BN: unknown option $1"
+      --qdab ) QDAB=1
+	   shift
+	   ;;
+       -* ) echo "$BN: unknown option $1"
            exit 1
            ;;
       *  ) break
@@ -392,11 +396,18 @@ if [ ! -r "$MAP" ] ; then
     die "Unable to find $MAP"
 fi
 
-
+# Remarkably, the continue inside the function works outside it:
 function maybe-skip {
   if [ $? != 0 ] ; then
     echo "$BN: skipping remaining steps for $gse"
     continue
+  fi
+}
+
+function maybe-remove
+  if [ -z "$KEEP" ] ; then 
+    # Remove the intermediate .pcl files
+    /bin/rm $gse.knn.pcl $gse.mapped.pcl $gse.mv.pcl 2> /dev/null
   fi
 }
 
@@ -469,6 +480,12 @@ do
   $ECHO $SPELL_TOOLS/collectFinalData.rb  $gse.averaged.pcl $gse.info $SPELL_TOOLS/ ./
   maybe-skip
 
+  if [ -z "$QDAB" ] ; then
+     verbose ... $gse.final.pcl done
+     maybe-remove
+     continue
+  fi
+
   verbose "#7"
   # verbose   $SLEIPNIR/Distancer -i $gse.final.pcl -o $gse.dat
   $ECHO $Distancer -i $gse.final.pcl -o $gse.dat
@@ -477,13 +494,10 @@ do
   verbose "#8"
   # verbose $Dat2Dab -i $gse.dat -o $gse.qdab
   $ECHO $Dat2Dab -i $gse.dat -o $gse.qdab
+  maybe-skip
 
-  if [ $? = 0 ] ; then verbose ... $gse.qdab done ; fi
-
-  if [ -z "$KEEP" ] ; then 
-    # Remove the intermediate .pcl files
-    /bin/rm $gse.knn.pcl $gse.mapped.pcl $gse.mv.pcl
-  fi
+  verbose ... $gse.qdab done
+  maybe-remove
 
 done < "$TMPFILE"
 
