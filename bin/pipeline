@@ -404,7 +404,7 @@ function maybe-skip {
   fi
 }
 
-function maybe-remove
+function maybe-remove {
   if [ -z "$KEEP" ] ; then 
     # Remove the intermediate .pcl files
     /bin/rm $gse.knn.pcl $gse.mapped.pcl $gse.mv.pcl 2> /dev/null
