@@ -6,10 +6,11 @@
 
 # For help: $0 --help
 
-VERSION=0.2.3
+VERSION=0.2.4
 # New in 0.2: --series-type, --series-types, --by-array
 # New in 0.2.1: default ORGANISM changed
 # New in 0.2.2: --since YYYY/MM ; --minimum N
+# New in 0.2.4: compatibility with MacOSX
 
 # Default organism:
 ORGANISM=Saccharomyces+cerevisiae
@@ -21,7 +22,7 @@ TMP=/tmp/$USER.$$
 # Requires: eutils website (esearch and efetch)
 
 BN=`basename $0`
-DN=`dirname $0`
+DN=$(cd $(dirname $0); pwd)
 
 function help {
 cat <<EOF
@@ -140,9 +141,9 @@ do case "$1" in
            ;;
       --since )
            if [[ "$2" =~ "/" ]] ; then
-	       if [[ "$2" =~ "^[0-9]+/[0-9][0-9]$" ]] ; then
+	       if [[ $2 =~ ^[0-9]+/[0-9][0-9]$ ]] ; then
 	         SINCEDATE="$2"
-               elif  [[ "$2" =~ "^[0-9]+/$" ]] ; then
+               elif  [[ $2 =~ ^[0-9]+/$ ]] ; then
 	         SINCEDATE="$2"01
 	       else
 		 echo "$BN: YEAR/MONTH should be specified as YYYY/MM or YYYY/"

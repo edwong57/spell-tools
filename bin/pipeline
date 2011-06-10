@@ -13,7 +13,9 @@
 # peak@princeton.edu 2011
 # For help: $0 --help
 
-VERSION=0.1.3
+VERSION=0.1.4
+
+# 0.1.4 - tested on Mac OSX; sometimes redirect stderr to .err file; --skip based on final.pcl
 
 # Requires the following:
 #  java, javac
@@ -115,7 +117,7 @@ Options:
   --ids PATHNAME  :: the pathname of a file giving the identifiers (ID
                      values as described above) of the GSE files to be
                      processed
-  --skip          :: skip an ID if the corresponding qdab file already
+  --skip          :: skip an ID if the corresponding final.pcl file already
                      exists
   --keep          :: keep intermediate data files that would otherwise
                      be deleted (see below).
@@ -185,6 +187,9 @@ do case "$1" in
       --qdab ) QDAB=1
 	   shift
 	   ;;
+       --nosleipnir ) NOSLEIPNIR=1
+           shift
+           ;;
        -* ) echo "$BN: unknown option $1"
            exit 1
            ;;
@@ -278,8 +283,12 @@ function runKnnImpute {
   # "KNNImputer does not perform correctly on raw single channel data ..."
   # KNNImputer -i $pcl -o $out
   # Some versions of runKnnImputer.rb require the SLEIPNIR argument to have a trailing /
-  $SPELL_TOOLS/runKnnImpute.rb "$pcl" "$info" "$SLEIPNIR"/ "$out"
-
+  if [ "$NOSLEIPNIR" ] ; then
+    echo SIMULATING KNNImputer
+    /bin/cp -ip "$pcl" "$out"
+  else
+    $SPELL_TOOLS/runKnnImpute.rb "$pcl" "$info" "$SLEIPNIR"/ "$out"
+  fi
 }
 
 #4
@@ -292,7 +301,6 @@ function mapGeneNames {
   
   # $SPELL_TOOLS/mapGeneNames.rb -v $GSE.pcl $GSE.info map=sce.map $GSE.mapped.pcl
   $SPELL_TOOLS/mapGeneNames.rb -v "$pcl" "$gse.info" "map=$map" "$out"
-
 }
 
 ##############################################
@@ -307,20 +315,24 @@ if [ -n "$KNNImputer" ] ; then
   SLEIPNIR=$(dirname "$KNNImputer")
 elif [ -x "$SPELL_TOOLS/KNNImputer" ] ; then
   SLEIPNIR=${SPELL_TOOLS}
+elif [ "$NOSLEIPNIR" ] ; then
+  echo "$BN --nosleipnir ..."
 else
-   die Unable to find KNNimputer
+  die Unable to find KNNimputer
 fi
 
-if [ -x $SLEIPNIR/Distancer ] ; then
-  Distancer=$SLEIPNIR/Distancer
-else
-  Distancer=$(which Distancer 2> /dev/null) || die Unable to find Distancer
-fi
+if [ -n "$QDAB" ] ; then
+  if [ -x $SLEIPNIR/Distancer ] ; then
+    Distancer=$SLEIPNIR/Distancer
+  else
+    Distancer=$(which Distancer 2> /dev/null) || die Unable to find Distancer
+  fi
 
-if [ -x $SLEIPNIR/Dat2Dab ] ; then
-  Dat2Dab=$SLEIPNIR/Dat2Dab
-else
-  Dat2Dab=$(which Dat2Dab 2> /dev/null) || die Unable to find Dat2Dab
+  if [ -x $SLEIPNIR/Dat2Dab ] ; then
+    Dat2Dab=$SLEIPNIR/Dat2Dab
+  else
+    Dat2Dab=$(which Dat2Dab 2> /dev/null) || die Unable to find Dat2Dab
+  fi
 fi
 
 check-compiled SeriesFamilyParser.java
@@ -396,9 +408,12 @@ if [ ! -r "$MAP" ] ; then
     die "Unable to find $MAP"
 fi
 
-# Remarkably, the continue inside the function works outside it:
+# If $1 then emit a message; and
+# if $? is non-zero then "continue" (remarkably, it is propagated outside the function!)
 function maybe-skip {
-  if [ $? != 0 ] ; then
+  local rc=$?
+  if [ -n "$1" -a -s "$1" ] ; then echo "$BN: see $1 for error messages" ; fi
+  if [ $rc != 0 ] ; then
     echo "$BN: skipping remaining steps for $gse"
     continue
   fi
@@ -423,8 +438,8 @@ do
   soft="$SPELL_IN/$soft"
   gz="$soft.gz"
 
-  if [ -n "$SKIP" -a -r $gse.qdab ] ; then
-      echo "$gse.qdab already exists"
+  if [ -n "$SKIP" -a -r $gse.final.pcl ] ; then
+      echo "Skipping $gse as --skip was specified and $gse.final.pcl already exists"
       continue
   fi
 
@@ -464,13 +479,13 @@ do
   maybe-skip
 
   verbose "#4"
-  $ECHO mapGeneNames $gse.knn.pcl $KEGG_ID.map
-  maybe-skip
+  $ECHO mapGeneNames $gse.knn.pcl $KEGG_ID.map 2> "$gse.mapped.pcl.err"
+  maybe-skip "$gse.mapped.pcl.err"
 
   verbose "#5"
   # agrees with spell.xml (whence -Xmx2g)
-  $ECHO $JAVA -Xmx2g MeanGenesThatAgree $gse.mapped.pcl $gse.averaged.pcl
-  maybe-skip
+  $ECHO $JAVA -Xmx2g MeanGenesThatAgree $gse.mapped.pcl $gse.averaged.pcl 2> $gse.averaged.pcl.err
+  maybe-skip "$gse.averaged.pcl.err"
 
   verbose "#6"
   # This script might simply mv the input to ${DIR}GSEnnn.final.pcl where DIR is the last argument

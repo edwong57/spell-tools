@@ -6,11 +6,13 @@
 
 # For help: $0 --help
 
-VERSION=0.0.7
+VERSION=0.0.8
+
+# 0.0.8: Compatibility with Mac OSX
 
 BN=`basename $0`
 # In case script is called using source: 
-DN=$(dirname $(readlink -f ${BASH_SOURCE[0]}))
+DN=$(cd $(dirname $0); pwd)
 
 TMP=/tmp/$USER
 ECHO=
@@ -381,11 +383,11 @@ function fiddle {
     grep -v ' *#' $in | sed -e 's/^ *//' -e 's/ *$//' | grep -v '^$' > $OUT.tmp
     in=$OUT.tmp
     first=$(head -n 1 "$in")
-    if [[ "$first" =~ "^[0-9]+$" ]] ; then
+    if [[ $first =~ ^[0-9]+$ ]] ; then
 	egrep "^[0-9]+$" "$in" | sed 's/\(.*\)/GSE\1_family.soft\nGSE\1_family.soft.gz/'
-    elif [[ "$first" =~ "^GSE[0-9]+$" ]] ; then
+    elif [[ $first =~ ^GSE[0-9]+$ ]] ; then
 	egrep "^GSE[0-9]+$" "$in" | sed 's/\(.*\)/\1_family.soft\n\1_family.soft.gz/'
-    elif [[ "$first" =~ "\.gz$" ]] ; then
+    elif [[ $first =~ \.gz$ ]] ; then
 	grep "\.gz$" "$in" | sed 's/^\(.*\)\.gz$/\1\n\1.gz/'
     else
         # appending .gz twice is not so bad
