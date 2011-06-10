@@ -178,7 +178,7 @@ end
 # Run KNNImputer
 # Ensure we have just one /
 cmd = ARGV[2]
-cmd="${cmd}/" unless cmd[-1] == "/"[0]
+cmd="#{cmd}/" unless cmd[-1] == "/"[0]
 
 cmd += "KNNImputer -i " + inFileName + " -o " + outFileName + " -k 10 -m 0.7 -d euclidean"
 $stderr.puts cmd
