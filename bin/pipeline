@@ -13,7 +13,7 @@
 # peak@princeton.edu 2011
 # For help: $0 --help
 
-VERSION=0.1.5
+VERSION=0.1.6
 
 # 0.1.4 - tested on Mac OSX; sometimes redirect stderr to .err file; --skip based on final.pcl
 # 0.1.5 - --resume
@@ -340,8 +340,9 @@ function SeriesFamilyParser {
 function MissingValues {
   local pcl="$1"
   local id="${1/.*/}"
-  #     MissingValues input    info     output max_mm_per_gene(%) min_required_samples max_allowed_in_dataset(%)
-  $JAVA MissingValues $pcl $id.info $id.mv.pcl 100                6                    100
+  #     MissingValues input    info     output max_mv_per_gene(%) min_required_samples max_allowed_in_dataset(%)
+  $JAVA MissingValues $pcl $id.info $id.mv.pcl  50                3                     50
+  # ... per Lars's SPELL Data Processing Pipeline documentation.
 }
 
 #3
