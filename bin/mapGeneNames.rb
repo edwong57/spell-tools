@@ -25,7 +25,7 @@ if ARGV.length < 3
   print <<-EOH
 Syntax: #{BN} [-v | --verbose] ARGS
 ARGS:
-   0 - input pcl filename, which must be prefixed with "GDSID_" or "GDSID." where GDSID is, for example, GSE217
+   0 - input pcl filename, the period-delimited prefix of which is used to find a match in the info file (see below)
    1 - info file (aka configuration file - often GSEnnn.info or allInfo.txt)
    2 - the pathname of the organism file, or "map=" followed immediately by the pathname of the map file (see below)
    3 - output file
@@ -35,6 +35,9 @@ Options:
 
 This script creates a new pcl file by copying the input pcl file after mapping the gene names in it to standard symbols.
 
+The period-delimited prefix of the pcl filename is used to find a match in the info file based on the DatasetID field.
+The pcl filename is normally prefixed with "GDSID." or "GDSID_SETID." where GDSID is the GEO id, for example, "GSE217." 
+and "SETID" is a character string that does contain a period.
 
 If specified, the organism file should consist of rows of the form
 
@@ -55,7 +58,7 @@ The .info file is consulted for the value of ORGANISM for this GDSID.
 Example:
   #{BN} GSE13219.knn.pcl GSE13219.sfp.info map=sce.map
 
-Version: 2011.06.02
+Version: 2011.06.10
 
 EOH
 
@@ -78,7 +81,13 @@ org_col = 2
 ###Read the configuration file and locate the needed info
 filename = File.basename(ARGV[0])
 
-GDSID = filename.slice(0, filename.index("_") || filename.index("."))
+i = filename.index(".")
+if i
+  GDSID = filename.slice(0, i)
+else
+  $stderr.print "#{BN}: the pcl filename must have a period-delimited prefix.\n"
+  exit 1
+end
 
 verbose("GDSID=#{GDSID}")
 

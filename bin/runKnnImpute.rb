@@ -17,39 +17,54 @@ else
   @@verbosity = false
 end
 
-if ARGV.length < 2
+if ARGV.length < 3
   print <<-EOH
 Syntax: #{BN} [-v | --verbose] ARGS
 ARGS:
-   0 - pcl file to impute - pathname or filename, normally with the GDSID as prefix (see below)
+   0 - pcl file to impute - pathname or filename, normally with GDSID or GSDID_SETID as prefix (see below)
    1 - info file (aka configuration file - often GSEnnn.info or allInfo.txt)
    2 - path to KNN impute program
-   3 - output filename
+   3 - output filename (defaults to PREFIX.knn.pcl where PREFIX is the period-delimited prefix of the pcl file name)
 
 Options:
    -v | --verbose :: verbose (to stderr)
 
-This script will run KNNimpute on the pcl file.  Since KNNImputer
-does not perform correctly on raw single channel data, such data
-are first log transformed, then imputed, then exponentiated. 
+This script will run KNNimputer on the pcl file.  Since KNNImputer
+does not perform correctly on raw single-channel data, such data are
+first log transformed, then imputed, and finally exponentiated.
 
-The file name of the input pcl file is normally prefixed with "GDSID_" or "GDSID." where
-GDSID is the GEO id, e.g. GSE13219.  However, if there is no _ or . in the filename, then if the info
-file is exactly two lines long, the GDSID will be taken from the info file.
+If the info file has just two lines, then an attempt to use the second
+line to obtain information about the pcl file will be made.
 
-Example:
+Otherwise, the specified pcl file name must have a period-delimited
+prefix that exactly matches the "DatasetID" field of the info file.
+
+By convention, the pcl file should have "GDSID." or GDSID_SETID." as
+its prefix, where GDSID is the GEO id (e.g. GSE13219) and SETID is an
+identifier that does NOT include any periods or underscores (e.g. setA).  
+
+
+Examples:
   #{BN} GSE13219.sfp.pcl GSE13219.sfp.info /usr/local/bin GSE13219.knn.pcl
 
-Version: 2011.06.04
+  #{BN} GSE13220_setA.sfp.pcl GSE13220_setA.sfp.info /usr/local/bin GSE13219_setA.knn.pcl
+
+Version: 2011.06.10
 EOH
   exit 0
 end
 
 
 ### FUNCTIONS
-def linecount(filename)
+def linecountUpto(filename, n)
   # count = %x{wc -l < #{filename}}.to_i
-  count = File.foreach(filename).count
+  # count = File.foreach(filename).count
+  size=0
+  File.foreach(filename) {
+    size += 1
+    return size if size > n
+  }
+  size
 end
 
 def verbose(*msgs)
@@ -80,12 +95,8 @@ rescue
   fd = File.open(ARGV[1] )
 end
 
-# Determine GDSID from the filename if possible
-i=filename.index("_") || filename.index(".")
-
-if i
-  GDSID = filename.slice(0, i)
-elsif 2 == linecount(ARGV[1])
+# If there are just two lines then proceed accordingly
+if 2 == linecountUpto(ARGV[1], 2)
   row=0
   fd.each_line do |line|
     row += 1
@@ -108,6 +119,12 @@ elsif 2 == linecount(ARGV[1])
       found = 1
     end
   end
+end
+
+# Determine GDSID from the filename if possible
+unless defined? GDSID
+  i=filename.index(".")
+  GDSID = filename.slice(0, i) if i
 end
 
 unless defined? GDSID
@@ -144,12 +161,13 @@ end
   
 
 inFileName = ARGV[0]
-outFileName = ARGV[3]
+argv3      = ARGV[3] ? ARGV[3] : (GDSID + "knn.pcl")
+outFileName = argv3
 
 #If this file needs to be log transformed, do it prior to imputing
 if logged == 0
 	#Create a .tmp file that contains the log xformed version
-	fout = File.open(ARGV[3] + ".tmp1","w")
+	fout = File.open(outFileName + ".tmp1","w")
 	IO.foreach(ARGV[0]) do |line|
 		line.chomp!
 		if $. < 3
@@ -171,8 +189,8 @@ if logged == 0
 	fout.flush
 	fout.close
 	#Set the in and out file names appropriately
-	inFileName = ARGV[3] + ".tmp1"
-	outFileName = ARGV[3] + ".tmp2"
+	inFileName = argv3 + ".tmp1"
+	outFileName = argv3 + ".tmp2"
 end
 
 # Run KNNImputer
@@ -186,7 +204,7 @@ system cmd
 
 #If this file was log transformed, exponentiate it so that probe averaging isn't affected
 if logged == 0
-	fout = File.open(ARGV[3], "w")
+	fout = File.open(argv3, "w")
 	IO.foreach(outFileName) do |line|
 		line.chomp!
 		if $. < 3

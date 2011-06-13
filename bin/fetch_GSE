@@ -6,7 +6,7 @@
 
 # For help: $0 --help
 
-VERSION=0.2.4
+VERSION=0.2.5
 # New in 0.2: --series-type, --series-types, --by-array
 # New in 0.2.1: default ORGANISM changed
 # New in 0.2.2: --since YYYY/MM ; --minimum N
@@ -140,7 +140,7 @@ do case "$1" in
            shift 2
            ;;
       --since )
-           if [[ "$2" =~ "/" ]] ; then
+           if [[ $2 =~ / ]] ; then
 	       if [[ $2 =~ ^[0-9]+/[0-9][0-9]$ ]] ; then
 	         SINCEDATE="$2"
                elif  [[ $2 =~ ^[0-9]+/$ ]] ; then
@@ -243,7 +243,7 @@ function verbose {
 
 mkdir -p "$TMP"
 
-OUT=$TMP/GSE_list
+OUT="$TMP/GSE_list"
 
 # GEO query language:
 # operators: AND OR NOT
@@ -305,7 +305,7 @@ verbose TERM="$TERM"
 
 function UIDS {
   # GEO Datasets return the "GDS ID"
-  wget $NV $QUIET -O $OUT \
+  wget $NV $QUIET -O "$OUT" \
     "http://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=gds&term=$TERM&retmax=10000"
 
   fgrep "<Id>" $OUT | fgrep "</Id>" | sed -e 's/[	 ]*<Id>\([0-9]*\).*/\1/' | sort -n > $OUT.sorted
