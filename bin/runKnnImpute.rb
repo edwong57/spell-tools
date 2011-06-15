@@ -41,7 +41,7 @@ prefix that exactly matches the "DatasetID" field of the info file.
 
 By convention, the pcl file should have "GDSID." or GDSID_SETID." as
 its prefix, where GDSID is the GEO id (e.g. GSE13219) and SETID is an
-identifier that does NOT include any periods or underscores (e.g. setA).  
+identifier that does NOT include any periods (e.g. setA).  
 
 
 Examples:
@@ -222,9 +222,9 @@ if logged == 0
 	fout.close
 	#Delete the intermediate files
 	cmd = "rm " + inFileName
-	#$stderr.puts cmd
+        verbose(cmd)
 	system cmd
 	cmd = "rm " + outFileName
-	#$stderr.puts cmd
+	verbose(cmd)
 	system cmd
 end
