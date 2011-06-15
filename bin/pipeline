@@ -13,11 +13,13 @@
 # peak@princeton.edu 2011
 # For help: $0 --help
 
-VERSION=0.1.7
+VERSION=0.1.8
 
 # 0.1.4 - tested on Mac OSX; sometimes redirect stderr to .err file; --skip based on final.pcl
 # 0.1.5 - --resume
-# 0.1.6 - since MeanGenesThatAgree uses -Xmx2g there is presumably no harm in using the same limit elsewhere
+# 0.1.6 - MissingValues: 50 3 50
+# 0.1.7 - since MeanGenesThatAgree uses -Xmx2g there is presumably no harm in using the same limit elsewhere
+# 0.1.8 - parseEntrezGeneInfo directories
 
 # Requires the following:
 #  java, javac
@@ -486,7 +488,7 @@ safecd "$SPELL_OUT"
 
 if [ ! -r "$MAP" ] ; then
    echo $BN: attempting to create $MAP ...
-   $ECHO $DN/parseEntrezGeneInfo -v
+   $ECHO $DN/parseEntrezGeneInfo -v --download "$SPELL_IN" --data .
 fi
 
 if [ ! -r "$MAP" ] ; then

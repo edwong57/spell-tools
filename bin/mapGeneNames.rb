@@ -1,5 +1,4 @@
 #!/usr/bin/env ruby
-
 # Copyright (C) 2007 Matt Hibbs and (C) 2011 Peter Koppstein
 # License: Creative Commons Attribution-NonCommerical-ShareAlike 3.0 Unported (CC BY-NC-SA 3.0)
 # See http://creativecommons.org/licenses/by-nc/3.0/
@@ -36,8 +35,8 @@ Options:
 This script creates a new pcl file by copying the input pcl file after mapping the gene names in it to standard symbols.
 
 The period-delimited prefix of the pcl filename is used to find a match in the info file based on the DatasetID field.
-The pcl filename is normally prefixed with "GDSID." or "GDSID_SETID." where GDSID is the GEO id, for example, "GSE217." 
-and "SETID" is a character string that does contain a period.
+The pcl filename is normally prefixed with "GDSID." or "GDSID_SETID." where GDSID is the GEO id, for example "GSE217.",
+and "SETID" is a character string that does not contain a period.
 
 If specified, the organism file should consist of rows of the form
 
@@ -58,11 +57,11 @@ The .info file is consulted for the value of ORGANISM for this GDSID.
 Example:
   #{BN} GSE13219.knn.pcl GSE13219.sfp.info map=sce.map
 
-Version: 2011.06.10
+Version: 2011.06.15
 
 EOH
 
-exit 0
+  exit 0
 end
 
 
