@@ -13,10 +13,11 @@
 # peak@princeton.edu 2011
 # For help: $0 --help
 
-VERSION=0.1.6
+VERSION=0.1.7
 
 # 0.1.4 - tested on Mac OSX; sometimes redirect stderr to .err file; --skip based on final.pcl
 # 0.1.5 - --resume
+# 0.1.6 - since MeanGenesThatAgree uses -Xmx2g there is presumably no harm in using the same limit elsewhere
 
 # Requires the following:
 #  java, javac
@@ -329,8 +330,9 @@ function SeriesFamilyParser {
   local out="$2"
   local info="$3"
   # $SPELL_TOOLS/seriesFamilyParser.rb "$in" > "$out"
-
-  $JAVA SeriesFamilyParser "$in" "$out" "$info"
+  # GSE13219 causes "Java heap space" failure with default memory on Mac; 300m is sufficient, 200m is not.
+  verbose $JAVA -Xmx2g SeriesFamilyParser "$in" "$out" "$info"
+  $JAVA -Xmx2g SeriesFamilyParser "$in" "$out" "$info"
   ## $JAVA GeoSeries       "$in" "$out" "$info"
 }
 
@@ -362,7 +364,7 @@ function runKnnImpute {
   # Some versions of runKnnImputer.rb require the SLEIPNIR argument to have a trailing /
   if [ "$NOSLEIPNIR" ] ; then
     echo $BN: SIMULATING KNNImputer
-    /bin/cp -ip "$pcl" "$out"
+    /bin/cp -p "$pcl" "$out"
   else
     $SPELL_TOOLS/runKnnImpute.rb "$pcl" "$info" "$SLEIPNIR"/ "$out"
   fi
