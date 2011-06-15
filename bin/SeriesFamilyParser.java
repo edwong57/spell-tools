@@ -24,7 +24,7 @@ public class SeriesFamilyParser {
 
 	// During zeros-as-missing-values estimation, zeros with fewer than this number decimals
 	// are considered to be true values (and hence not missing values)
-	protected int valueDesimals = 5;
+	protected int valueDecimals = 5;
 	
 	// Column indexes
 	private int platformProbeIDCol = -1;
@@ -86,7 +86,7 @@ public class SeriesFamilyParser {
 	/**
 	  * Find columns with gene names, expression values and so on
 	  *  
-	  * @return: none, but global variables are initialzied
+	  * @return: none, but global variables are initialized
 	  *
 	  * @throws IOException 
 	  */    
@@ -95,7 +95,7 @@ public class SeriesFamilyParser {
 		
 		BufferedReader fin = new BufferedReader(new FileReader(softFilename));	
 	         
-		// Number of zero expression values with at least N desimals, and no desimals. 
+		// Number of zero expression values with at least N decimals, and no decimals. 
 		// These are used to determine whether to treat zero's as missing values
 		int zeroAsValue = 0;
 		int zeroAsMissing = 0;
@@ -139,7 +139,7 @@ public class SeriesFamilyParser {
 	        					platformProbeIDCol = i;	                				
 	        				}
 	        				else {
-	        					System.err.println("Multiple proble IDs col: " + header + " (col: " + i + ")");
+	        					System.err.println("Multiple probe IDs col: " + header + " (col: " + i + ")");
 	        				}
 
 	        				nPlatfomProbeIDColFound++;
@@ -243,7 +243,7 @@ public class SeriesFamilyParser {
 	        				intExpressionValue = true;
 	        			}
 	        			else if (Float.valueOf(ev) == 0.0) {
-	        				if ((ev.charAt(1) == '.') && (ev.length() >= (valueDesimals - 1))) {
+	        				if ((ev.charAt(1) == '.') && (ev.length() >= (valueDecimals - 1))) {
 	        					zeroAsValue += 1;
 	        				}
 	        				else {
@@ -270,7 +270,7 @@ public class SeriesFamilyParser {
 			System.err.println("'null' expression values found");
 		}
 		if (intExpressionValue) {
-			System.err.println("'0' (no desimals) expression values found");
+			System.err.println("'0' (no decimals) expression values found");
 		}
 		if (emptyExpressionValue) {
 			System.err.println("Empty expression values found");
@@ -302,7 +302,7 @@ public class SeriesFamilyParser {
             throw new IOException("Could not parse SOFT file");
         }
         else if ((nSampleProbeIDFound > 1) || (nExpressionValueColFound > 1)) {
-        	System.err.printf("Inconsitent column names: (sp: %d, ev: %d)\n",
+        	System.err.printf("Inconsistent column names: (sp: %d, ev: %d)\n",
         			nSampleProbeIDFound, nExpressionValueColFound);
         	throw new IOException("Could not parse SOFT file");
         }
@@ -315,7 +315,7 @@ public class SeriesFamilyParser {
 	}        
 	 
 	/**
-	 * Do the soft to pcl file converion.
+	 * Do the soft to pcl file conversion.
 	 * 
 	 * Note! The parseSOFT must have been called before calling this function.
 	 * @throws IOException 
@@ -670,7 +670,7 @@ public class SeriesFamilyParser {
 		
 		// skip header line
 		fin2.readLine();
-		// skip GWEIHT line
+		// skip GWEIGHT line
 		fin2.readLine();
 		while (true) {
 			String line = fin2.readLine();			
@@ -740,7 +740,7 @@ public class SeriesFamilyParser {
 		}
 
 		PrintStream finfo = new PrintStream(new FileOutputStream(infoFilename));
-		finfo.println("File\tDatasetID\tOrganism\tPlatform\tValueType\t#channels\tTitle\tDesctiption\tPubMedID\t" +
+		finfo.println("File\tDatasetID\tOrganism\tPlatform\tValueType\t#channels\tTitle\tDescription\tPubMedID\t" +
 				"#features\t#samples\tdate\tMin\tMax\tMean\t#Neg\t#Pos\t#Zero\t#MV\t#Total\t#Channels\t" +
 				"logged\tzerosAreMVs\tMVcutoff");
 		finfo.print(new File(softFilename).getName());
