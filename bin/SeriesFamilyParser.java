@@ -1,5 +1,5 @@
 // Based on Troilkatt version that was current as of Feb 4, 2011
-// with mods at //peak
+// with mods by peak@princeton.edu (spelling corrections and changes at //peak)
 
 //peak: comment out following line
 // package edu.princeton.function.troilkatt.tools;

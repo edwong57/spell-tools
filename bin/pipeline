@@ -13,13 +13,14 @@
 # peak@princeton.edu 2011
 # For help: $0 --help
 
-VERSION=0.1.8
+VERSION=0.1.9
 
 # 0.1.4 - tested on Mac OSX; sometimes redirect stderr to .err file; --skip based on final.pcl
 # 0.1.5 - --resume
 # 0.1.6 - MissingValues: 50 3 50
 # 0.1.7 - since MeanGenesThatAgree uses -Xmx2g there is presumably no harm in using the same limit elsewhere
 # 0.1.8 - parseEntrezGeneInfo directories
+# 0.1.9 - gse=GSEnnn or GSEnnn_setABC
 
 # Requires the following:
 #  java, javac
@@ -47,29 +48,34 @@ JAVA="java -cp $SPELL_TOOLS"
 
 function help {
 cat <<EOF
-Syntax: $BN [OPTIONS] [ID ...]
+Syntax: $BN [OPTIONS] [ID|FILENAME] ...
 
 This script runs the SPELL data processing pipeline for a collection
-of GSE files (named GSEnnn_family.soft and/or GSEnnn_family.soft.gz),
-one file at a time.
+of GEO GSE files, one file at a time.  
 
-The input files are assumed to be in a single directory, here referred
-to as SPELL_IN; the files produced by this script are placed in a
-directory that is here referred to as SPELL_OUT.  Defaults for these
-and other variables are described below.
+The GSE files to be processed must have names of the form
+{ID}_family.soft or, if the file has been gzipped,
+{ID}_family.soft.gz, where ID must be of the form GSE{N} or
+GSE{N}_{NAME}
 
-The GSE files to be processed may be specified in one of two ways:
+where N is an integer and NAME is an alphanumeric string.
 
-1) The GSE files may be specified by ID on the command line.  Each ID
-specifies an NCBI GSEnnn_family.soft file and may take any or all of
-the following forms:
+Here are two examples of valid GSE filenames:
 
-   * GSEnnn_family.soft
-   * GSEnnn_family.soft.gz
-   * GSEnnn
+ GSE123_family.soft
+ GSE123_set1_family.soft.gz
 
-2) If the "--match GLOB" option is used, then all matching files in the SPELL_IN
-   directory are processed.
+The GSE files to be processed must be in a single directory, here
+referred to as SPELL_IN; the files produced by this script are placed
+in a directory that is here referred to as SPELL_OUT.  Defaults for
+these and other variables are described below.
+
+The GSE files to be processed may be specified in one of several ways:
+
+  1) By ID or filename on the command line;
+  2) By ID or filename as listed in a file identified using the --ids option;
+  3) If the "--match GLOB" option is used, then all matching files in
+     the SPELL_IN directory are processed.
 
 Examples:
 
@@ -139,14 +145,16 @@ download selected files, and the select_GSE script may be used to
 select from amongst downloaded GSE files.
 
 If the "map" file cannot be found, an attempt to create it using
-parseEntrezGeneInfo will be made.
+the script parseEntrezGeneInfo will be made.
 
 Output Files:
 
 The following files that are produced in the SPELL_OUT directory are
 always retained:
 
-   {gse}.info {gse}.sfp.pcl {gse}.final.pcl (and {gse}.qdab if requested)
+   {gse}.info
+   {gse}.sfp.pcl
+   {gse}.final.pcl (and {gse}.qdab if requested)
 
 The other .pcl files that are produced in this directory will only be kept
 if the --keep option is specified.
@@ -518,19 +526,18 @@ function execute {
   $ECHO "$@"
 }
 
-while read id etc
-# for id in GSE13219
+while read spec etc
+# for spec in GSE13219
 do
-  if [ -z "$id" -o "${id:0:1}" = "#" ] ; then continue ; fi
+  if [ -z "$spec" -o "${spec:0:1}" = "#" ] ; then continue ; fi
 
-  verbose $id ...
-
-  gse="${id/_*/}"
-  soft=${gse}_family.soft
-  soft="$SPELL_IN/$soft"
+  verbose "$spec ..."
+  # Strip the suffix if any:
+  gse="${spec/_family*/}"
+  soft="$SPELL_IN/${gse}_family.soft"
   gz="$soft.gz"
 
-  if [ -n "$SKIP" -a -r $gse.final.pcl ] ; then
+  if [ -n "$SKIP" -a -r "$gse.final.pcl" ] ; then
       echo "Skipping $gse as --skip was specified and $gse.final.pcl already exists"
       continue
   fi
