@@ -1,1 +1,617 @@
-/Genomics/Users/peak/bin/translate
+#!/bin/bash
+# Copyright (c) 2010-2011 peak@princeton.edu
+# License: http://www.opensource.org/licenses/mit-license
+
+# For help: $0 --help
+
+VERSION=0.1
+
+# Revisions:
+#  11/2010
+#  12/2010: if -o then omit the entire line if the translated field is blank
+#  12/2010: -q
+#  12/2010: preserve FS by specifying OFS
+#  12/2010: add --first and --warn options
+#  01/2011: add --comment option; allow "tab" for the tab character
+#  01/2011: add --key and --nonempty
+#  02/2011: when --key KEYCOLUMN is specified, allow "--column 0"
+#  03/2011: --columns
+
+# Requires:
+#   /dev/null if a dictionary is not specified
+
+BN=`basename $0`
+
+TAB="	"
+
+# Defaults:
+DICT=/dev/null
+FROM=1
+TO=2
+N=1
+DFS=$TAB
+IFS=$TAB
+VFS=none
+OMIT=0
+FLATTEN=0
+QUIET=0
+WARN=
+HEADERS=0
+KEYCOLUMN=0
+
+function help {
+cat <<EOF
+Syntax: $BN [OPTIONS]
+
+This script is a filter with several uses:
+
+1) to translate one or more symbols in the column of a file.
+2) to project values from one column in one file onto a column in
+   another file (see the Projection section below).
+3) to select rows from one file based on values in a second file.
+4) to eliminate duplicate entries within a field, without sorting.
+5) to "flatten" a file (i.e. to uncoalesce a field -- see Examples 3 and 4).
+6) to generate an unambiguous dictionary from one with ambiguities.
+
+If the column to be translated contains more than one value, and if
+more than one of these values translates to the same symbol, then only
+one occurrence of that symbol is emitted.
+
+The translation is based on a simple dictionary, but the dictionary may
+have ambiguities, and need not explicitly specify every translation pair.
+
+Optionally, one can specify that input rows with multiple symbols to
+be translated should generate separate rows, one for each distinct
+translated symbol.
+
+STDIN: 
+ * Column N of each row will be translated.
+
+   If VFS (the "value field separator") is specified by the --vfs option,
+   and if the column to be translated  itself contains multiple values
+   as determined by VFS, then each value will be translated.
+
+STDOUT:
+  * Translated rows
+
+
+A dictionary file is not always required, but if one is specified, it
+is used to define (possibly indirectly) a map from values in column
+FROM to values in column TO.  The values of FROM and TO may be the same.
+
+The dictionary file itself can have multiple entries for a single FROM value.
+Unless the --first or --best option is specified, the last-specified 
+translation value is used.  To see the reduced dictionary, specify
+the --print-reduced-dictionary option.
+
+If the --fold option is specified, then values that are not explicitly
+in the dictionary will be translated by uppercasing them.
+
+If the --omit option is specified, then untranslatable values will be
+omitted and an error message (column IFS value IFS "not found") will
+be printed for each such value encountered (unless the quiet option
+has been specified); in addition, the entire row will be omitted if
+the translated field is empty (or if two rows are being translated and
+either of the fields being translated is empty).
+
+
+Projection:
+If "--key KEYCOLUMN" and "--column N" are specified, then whenever
+value[KEYCOLUMN] == FROM for some pair (FROM,TO) in the dictionary, 
+then the value in column N is changed to TO.  If N is 0, then 
+a new column is added before the first column.
+
+If the --omit option is also specified, then rows for which
+value[KEYCOLUMN] is not in the dictionary are omitted.  If the
+--nonempty option is specified, then whenever TO is empty, the pair
+(FROM,TO) is ignored.
+
+If KEYCOLUMN is specified and N is not specified, the default value of N
+is used.  
+
+
+Options:
+ --comment STRING : ignore lines in STDIN beginning with STRING in column 1
+ --dict DICT : the dictionary filepath (default: $DICT )
+ --dictionary DICT : the same as --dict DICT
+ --from FROM : column number of the "from" field in the dictionary (default: $FROM)
+ --to TO     : column number of the "to" field in the dictionary (default: $TO)
+ --column N  : column to be translated (default: $N)
+ --columns N N2 : columns to be translated
+ --key KEYCOLUMN  : the column number in STDIN containing the key.
+ --first     : use the first translation rather than the last, but if the
+               --best option is specified, the best translation will
+               be used if it exists.
+ --best      : use the best translation (see below)
+ --fold      : if the dictionary does not specify a translation for a
+               value, V, then use the translation of uppercase(V), if
+               necessary using the mapping: uppercase(key) -> translation[key]
+               (for each key in the reduced dictionary).
+ --headers N : number of header records (default: $HEADERS)
+ --warn      : write a warning to stderr if there is any ambiguity in translation
+
+ --print-reduced-dictionary : print out the lines of DICT that will actually be used, and then exit immediately.
+ --untranslatable : only print untranslatable values, once per encounter
+
+ --dfs DFS   : dictionary field separator (default: $DFS)
+ --ifs IFS   : field separator of input (default: $IFS)
+ --vfs VFS   : field separator of values in column N (default: none)
+
+ -n | --nonempty : when projecting, if the TO value is the empty string, then ignore the (FROM,TO) pair.
+ -f | --flatten : emit one row for each value in column N (i.e. uncoalesce the field)
+ -o | --omit    : if a value cannot be translated, then omit it, and do not print the corresponding 
+                  row if the translated field is empty (or if either of the fields being translated is empty
+                  if two rows are being translated).
+ -v | --verbose : verbose
+ -q | --quiet   : do not print a message when an untranslatable value is encountered.
+
+
+Specifying DFS, IFS or VFS as "space" is equivalent to specifying " ", and similarly for "tab".
+
+
+Best Translation
+----------------
+If the --best option is specified, then in the case of ambiguity,
+the possible translations are prioritized as follows:
+
+ #1 from == to
+ #2 uppercase(from) == to
+ #3 uppercase(from) == uppercase(to)
+
+For example, suppose the dictionary contains "from to #comment" entries as follows:
+x x    # top priority: from == to
+x y
+y Y    # medium priority: uppercase(from) == to
+y z
+ab cd
+ab Ab  # low priority: uppercase(from) == uppercase(to)
+
+Then, because of the prioritization, the "best translation" is in effect defined by the following dictionary:
+x x
+y Y
+ab Ab
+
+With the "--best" option, the following translations would therefore be made:
+x -> x
+y -> Y
+
+With the --best and --fold options together, these translations would be made:
+
+Y -> Y (the entry "y Y" implies "Y Y")
+AB -> Ab (the entry "ab Ab" implies "AB Ab")
+
+
+Examples
+--------
+In these examples, the file named DICTIONARY is assumed to have the following entries:
+1 one
+2 2
+2 two
+une one
+
+
+Example 1: (simple translation)
+
+The command: $BN --dict DICTIONARY --dfs space --ifs space --vfs , --column 2
+
+would translate the following line:
+a 1,2,une b
+
+to:
+
+a one,two b
+
+Notice that the translation of "une" to "one" is in effect suppressed.
+
+
+Example 2: (row selection)
+To select rows based on whether the value in the first field appears in the first field of the file named SELECT:
+
+$BN -q -o --dict SELECT --dfs space --from 1 --to 1 --ifs space
+
+
+Example 3: (uncoalesce the values in a field)
+
+The command: $BN --ifs space --vfs , --column 2 --flatten
+
+would translate the following line:
+
+a 2,1,1,2 b
+
+to:
+
+a 2 b
+a 1 b
+
+
+Example 4: (uncoalesce the values in a field)
+
+The command: $BN  --dict DICTIONARY --dfs space --ifs space --vfs , --column 2 --flatten -q -o
+
+would translate the following line:
+
+a 2,1,3 b
+
+to:
+
+a two b
+a one b
+
+
+Example 5: (translation with "--first")
+
+The command: $BN  --dict DICTIONARY --dfs space --first
+
+would translate the following line:
+2 
+
+to:
+2
+
+Example 6 (projection):
+
+The command $BN --dict DICTIONARY --dfs space --ifs space --key 1 --column 2
+
+would translate the following line:
+1 xyzzy
+
+to:
+1 one
+
+Example 7 (translate two columns):
+
+$BN --dict DICTIONARY --dfs space --ifs space --columns 1 2 <<END
+1 1 1
+1 2 3
+END
+
+produces:
+
+one one 1
+one two 3
+
+
+Example 8 (translate two columns with "--omit"):
+
+$BN --dict DICTIONARY --dfs space --ifs space --columns 1 2 --omit -q <<END
+1 1 1
+1 3 4
+3 1 4
+1 2 3
+END
+
+produces:
+
+one one 1
+one two 3
+
+Version: $VERSION
+EOF
+}
+
+# set global variable: value
+function value {
+  value="$1"
+  case "$value" in space ) value=" " ;; tab ) value="$TAB" ;; esac
+}
+
+while [ "$1" ]
+do case "$1" in
+      -h | --help ) help
+           exit
+           ;;
+      -o | --omit ) OMIT=1
+           shift
+           ;;
+      -f | --flatten ) FLATTEN=1
+           shift
+           ;;
+      -v | --verbose ) VERBOSE=1
+           shift
+           ;;
+      -q | --quiet ) QUIET=1
+           shift
+           ;;
+      --comment ) COMMENT="$2"
+           shift 2
+           ;;
+      --dictionary | --dict )
+           DICT=$2
+           shift 2
+           ;;
+      --from ) FROM="$2"
+           shift 2
+           ;;
+      --to ) TO="$2"
+           shift 2
+           ;;
+      --column ) N="$2"
+           shift 2
+           ;;
+      --columns ) N="$2"
+	   N2="$3"
+           shift 3
+           ;;
+      --dfs ) value "$2"
+           DFS="$value"
+           shift 2
+           ;;
+      --ifs ) value "$2"
+           IFS="$value"
+           shift 2
+           ;;
+      --vfs ) value "$2"
+           VFS="$value"
+           shift 2
+           ;;
+      --first ) FIRST=1 
+           shift
+           ;;
+      --best ) BEST=1
+           shift
+           ;;
+      --fold ) FOLD=1
+           shift
+           ;;
+      --warn ) WARN=1 
+           shift
+           ;;
+      --headers ) HEADERS="$2"
+           shift 2
+           ;;
+      --nonempty ) NONEMPTY=1
+           shift
+           ;;
+       --print-reduced-dictionary ) PRD=1
+           shift 
+           ;;
+       --untranslatable | --untranslateable ) UNTRANSLATABLE=1
+           shift 
+           ;;
+       --key | --keycolumn ) KEYCOLUMN="$2"
+           shift 2
+           ;;
+       -* ) echo "$BN: unrecognized option: $1"
+           exit 1
+           ;;
+      *  ) break
+           ;;
+  esac
+done
+
+function die {
+    echo "$BN: $@" >&2
+    exit 1
+}
+
+if [ "$VERBOSE" ] ; then
+  cat <<EOF
+DICT=$DICT
+FROM=$FROM
+TO=$TO
+COLUMN=$N
+DFS=$DFS
+IFS=$IFS
+VFS=$VFS
+
+EOF
+if [ ! -z $N2 ] ; then echo "N2=$N2" ; fi
+fi
+
+if [ -z "$DICT" -o ! -r "$DICT" ] ; then
+  echo "$BN: dictionary $DICT not found"
+  exit 1
+fi
+
+awk "-F$IFS" -v dict="$DICT" -v from="$FROM" -v to="$TO" -v dfs="$DFS" \
+             -v first="$FIRST" -v best="$BEST" -v fold="$FOLD" -v warn="$WARN" \
+             -v ifs="$IFS" -v vfs="$VFS" -v column="$N" -v omit="$OMIT" \
+             -v column2="$N2" \
+             -v flatten="$FLATTEN" -v quiet="$QUIET" -v prd="$PRD" \
+             -v verbose="$VERBOSE" \
+             -v keycolumn="$KEYCOLUMN" \
+             -v nonempty="$NONEMPTY" \
+             -v headers="$HEADERS" \
+             -v comment="$COMMENT" \
+             -v untranslatable="$UNTRANSLATABLE" '
+  BEGIN {
+    FS=dfs
+    TAB="	";
+    lencomment = length(comment);
+
+    while ( getline < dict ) {
+      # print "got 1=" $from, "with 2=" $to
+      if (warn) {
+	if ($from in translation) {
+          if (translation[$from] != $to) { 
+            warning[$from] ++;
+            # print "setting warning[" $from "] to " warning[$from]
+          }
+        } else { 
+          warning[$from] = 1;
+        }
+      }
+      # foundbest = 2 means an entry $from == $to was found
+      if (best) {
+        upperfrom=toupper($from)
+        if (foundbest[$from] == 2) {}
+        else {
+          if (foundbest[$from] == 1 ) {
+            if ($from == $to) { 
+              foundbest[$from]=2 ; translation[$from] = $to;
+            }
+          } else { 
+            if ($from == $to) {
+              foundbest[$from]=2;  translation[$from] = $to;
+            }
+            else { 
+              if (upperfrom == toupper($to)) {
+                foundbest[$from]=1; translation[$from] = $to;
+              }
+              else {
+                if (! (first && ($from in translation))) {
+                  translation[$from] = $to;
+                  # reverse[$to] = $from
+                }
+              }
+            }
+          }
+        }
+      } else {
+        if (! (first && ($from in translation))) {
+          translation[$from] = $to;
+          # reverse[$to] = $from
+        }
+      }
+    }
+    FS=ifs
+    # Setting FS is not in general sufficient to preserve OFS:
+    OFS=ifs
+
+    delete foundbest
+    if (prd) {
+      # print "DICTIONARY:"; 
+      for (key in translation) { print key OFS translation[key]; }
+      # print "END DICTIONARY"; 
+      exit
+    }
+
+    # If fold, then create an auxiliary dictionary, respecting "--first":
+    if (fold) {
+       for (key in translation) {
+          uc=toupper(key);
+          if (uc != key && ! (uc in translation)) {
+            if (first && (uc in aux)) {
+              # print "Skipping " key " to " translation[key];  #VERBOSE
+            }
+            else {
+  	      # print "Adding aux[" uc "] = " translation[key]; #VERBOSE
+              aux[uc] = translation[key];
+            }
+          }
+       }
+    }
+    #print "AUX:";        for (key in aux) { print key " :: " aux[key] ; }
+  } # END OF BEGIN
+  NR <= headers { if (!untranslatable) {print}; next }
+  lencomment != 0 && substr($0,1,lencomment) == comment { next }
+  keycolumn != 0 {
+    if ( $keycolumn in translation ) {
+      tr = translation[$keycolumn];
+      if (tr != "" || nonempty == "" ) {
+         if (column == 0) { 
+            $0 = tr FS $0 ; 
+         }
+         else { $column = tr; }
+      }
+      print;
+    } else {
+      if (!omit) { print; }
+    }
+    next;
+  }
+  { # First handle column2:
+    if (column2) {
+      found_value2 = ""; 
+      value2=$column2;
+      if (verbose) { print "value2="value2 ", column2 = " column2", $column2 =" $column2; }
+      translated2="";
+      error2=0;
+      if (value2 in translation) {
+        tv2 = translation[value2];
+        found_value2 = 1;
+        if (verbose) { print value2 " in translation is " tv2; }
+        if (warn && warning[value2] > 1) {
+          print "WARNING: in line " NR ", " $from " -> " tv2 " but there are " warning[value2] " possible translations" > "/dev/stderr";
+        }
+      } else {
+        if (fold) {
+          uv2=toupper(value2);
+          if (verbose) { print "toupper(" value2 ") = " uv2; }
+          if (uv2 in translation) { tv2 = translation[uv2]; found_value2 = 1; }
+          else {
+            if (uv2 in aux) {       tv2 = aux[uv2];         found_value2 = 1; }
+          }
+        }
+      }
+      if (!found_value2 && omit) {
+          # Use a field separator so the error message can easily be parsed:
+          if ( quiet == 0) { print $column OFS vi OFS "not found" > "/dev/stderr"; }
+      }
+    }
+    # Back to normal
+    # ignore spaces
+    if (vfs == "none") {
+      n = 1; 
+      value[1]=$column;
+    } else {
+      n = split($column, value, vfs " *")
+      # print "split ["$column"] into " n " parts";
+    }
+    translated="";
+    delete memory;
+    for (i=1; i<=n; i++) {
+      tv="";
+      vi=value[i];
+      error=0;
+      if (vi in translation) {
+        tv = translation[vi]; 
+        # print vi " in translation is " tv;
+        if (warn && warning[vi] > 1) {
+          print "WARNING: in line " NR ", " $from " -> " tv " but there are " warning[vi] " possible translations" > "/dev/stderr";
+        }
+      } else {
+        if (fold) {
+	  uvi=toupper(vi);
+          # print "toupper(" vi ") = " uvi; #VERBOSE
+          if (uvi in translation) { tv = translation[uvi]; }
+          else {
+            if (uvi in aux) { 
+              tv = aux[uvi];
+            }
+          }
+        }
+      }
+      if (untranslatable) { 
+        if (tv == "") {print $column; }
+        continue; 
+      }
+      if (tv == "") {
+        if (omit == 0) {
+          tv = vi;
+	} else {
+          error=1
+          # Use a field separator so the error message can easily be parsed:
+          if ( quiet == 0) { print $column OFS vi OFS "not found" > "/dev/stderr"; }
+        }
+      }
+      if (error == 0 && memory[tv] != tv ) {
+        memory[tv] = tv;
+        # print "setting memory of " tv;
+        if (flatten == 1) {
+          $column = tv
+          print
+        } else {
+          if (translated == "") {
+            translated =  tv;
+            # print "FOUND: " tv
+          } else {
+            translated = translated vfs tv; 
+            # print "TRANSLATION: ", translated
+          }
+        }
+      }
+    } # END FOR
+    if (flatten == 0 && ! untranslatable ) {
+      $column = translated
+      if (column2) {
+          if ($column2 != tv2) { $column2 = tv2; }
+          if (omit && !found_value2) { translated = "" }
+      }
+      # if omit and there is nothing (or N2 could not be translated), then skip this row:
+      if (omit == 0 || translated != "") {
+        print
+      }
+    }
+  }
+  ' 
