@@ -1,0 +1,624 @@
+#!/bin/bash
+
+# IN PROGRESS
+
+# Note: "agrees with spell.xml" refers to
+# troilkatt/datasets/old/spell.xml (current as of June 8, 2011)
+
+# Copyright (C) 2011 peak@princeton.edu
+# License: Creative Commons Attribution-NonCommerical-ShareAlike 3.0 Unported (CC BY-NC-SA 3.0)
+# See http://creativecommons.org/licenses/by-nc/3.0/
+# Attribution shall include the copyright notice above.
+
+# peak@princeton.edu 2011
+# For help: $0 --help
+
+VERSION=0.1.9
+
+# 0.1.4 - tested on Mac OSX; sometimes redirect stderr to .err file; --skip based on final.pcl
+# 0.1.5 - --resume
+# 0.1.6 - MissingValues: 50 3 50
+# 0.1.7 - since MeanGenesThatAgree uses -Xmx2g there is presumably no harm in using the same limit elsewhere
+# 0.1.8 - parseEntrezGeneInfo directories
+# 0.1.9 - gse=GSEnnn or GSEnnn_setABC
+
+# Requires the following:
+#  java, javac
+#  Sleipnir programs: KNNImputer (on path or in $SPELL_TOOLS)
+#    (For qdab files, Distancer and Dat2Dab are also required)
+#  scripts in $SPELL_TOOLS
+
+ECHO=
+VERBOSITY=0
+
+ORGANISM="Saccharomyces cerevisiae"
+DEFAULT_KEGG_ID=sce
+
+BN=`basename $0`
+DN=$(cd $(dirname $0); pwd)
+DNUP=$(cd "$DN/.." ; pwd)
+
+SPELL_TOOLS="$DN"
+
+SPELL_DATA="$DNUP/data"
+
+DEFAULT_SPELL_IN=$SPELL_DATA/download
+
+JAVA="java -cp $SPELL_TOOLS"
+
+function help {
+cat <<EOF
+Syntax: $BN [OPTIONS] [ID|FILENAME] ...
+
+This script runs the SPELL data processing pipeline for a collection
+of GEO GSE files, one file at a time.  
+
+The GSE files to be processed must have names of the form
+{ID}_family.soft or, if the file has been gzipped,
+{ID}_family.soft.gz, where ID must be of the form GSE{N} or
+GSE{N}_{NAME}
+
+where N is an integer and NAME is an alphanumeric string.
+
+Here are two examples of valid GSE filenames:
+
+ GSE123_family.soft
+ GSE123_set1_family.soft.gz
+
+The GSE files to be processed must be in a single directory, here
+referred to as SPELL_IN; the files produced by this script are placed
+in a directory that is here referred to as SPELL_OUT.  Defaults for
+these and other variables are described below.
+
+The GSE files to be processed may be specified in one of several ways:
+
+  1) By ID or filename on the command line;
+  2) By ID or filename as listed in a file identified using the --ids option;
+  3) If the "--match GLOB" option is used, then all matching files in
+     the SPELL_IN directory are processed.
+
+Examples:
+
+The following examples assume that the organism under consideration is
+${ORGANISM}:
+
+a) In the examples in this section, all the GSE files are in the
+   "SPELL_IN" directory location (in the current environment, that
+   would be $DEFAULT_SPELL_IN)
+
+   To process all GSE files corresponding to the IDs (as described
+   above) listed in a file named GSE_LIST:
+
+   $BN --ids GSE_LIST
+
+   To process all the .gz files in the "standard" download location other than
+   those for which .qdab files already exist:
+
+   cd $DEFAULT_SPELL_IN ; $BN --skip GSE*.gz
+
+b) In this example, all the files matching "GSE*.gz" in a directory
+   named WHEREVER are to be processed:
+
+   $BN --in WHEREVER --match "GSE*.gz"
+
+   The following invocation is equivalent:
+
+   cd WHEREVER ; $BN --in . GSE*.gz
+
+   
+Summary of defaults:
+  KEGG_ID    defaults to $DEFAULT_KEGG_ID
+  SPELL_IN   defaults to ../data/download (relative to the location of this script);
+  SPELL_OUT  defaults to ../data/download/KEGG_ID (relative to the location of this script);
+
+Options:
+  -h | --help     :: this help
+  -v | --verbose  :: verbose (equivalent to --verbosity 1)
+  --verbosity N   :: verbosity level (a positive integer)
+  --kegg KEGG_ID  :: the KEGG ID for the organism, used in constructing
+                     the default values of various file and directory
+                     names (default: $DEFAULT_KEGG_ID)
+  --in SPELL_IN   :: the pathname of the directory holding the GSE files
+                     (default: $DEFAULT_SPELL_IN)
+  --out SPELL_OUT :: the pathname of the directory for files produced
+                     by this script (default: SPELL_DATA/KEGG_ID
+                     where KEGG_ID is the KEGG_ID)
+  --map PATHNAME  :: the pathname of the gene map file to use (default:
+                     SPELL_OUT/KEGG_ID.map)
+  --match GLOB    :: the "glob" expression to be used in the SPELL_IN
+                     directory to obtain the filenames to be processed
+  --ids PATHNAME  :: the pathname of a file giving the identifiers (ID
+                     values as described above) of the GSE files to be
+                     processed
+  --resume        :: skip any step for which the output already exists
+  --skip          :: skip an ID if the corresponding final.pcl file already
+                     exists
+  --keep          :: keep intermediate data files that would otherwise
+                     be deleted (see below).
+  --qdab          :: also run Distancer and Dat2Dab to produce a .qdab file
+
+Notes:
+
+Before running the pipeline, all the GSE files to be processed should
+be placed in a single directory.  The fetch_GSE script may be used to
+download selected files, and the select_GSE script may be used to
+select from amongst downloaded GSE files.
+
+If the "map" file cannot be found, an attempt to create it using
+the script parseEntrezGeneInfo will be made.
+
+Output Files:
+
+The following files that are produced in the SPELL_OUT directory are
+always retained:
+
+   {gse}.info
+   {gse}.sfp.pcl
+   {gse}.final.pcl (and {gse}.qdab if requested)
+
+The other .pcl files that are produced in this directory will only be kept
+if the --keep option is specified.
+
+If gunzip is run on a GSEnnn_family.soft.gz by this script, the unzipped file
+will only be kept if the --keep option is specified.
+
+
+Version: $BN $VERSION
+
+See source for copyright and licensing details.
+EOF
+}
+
+while [ "$1" ]
+do case "$1" in
+      -h | --help ) help
+           exit
+           ;;
+      -v | --verbose ) VERBOSITY=1
+           shift
+           ;;
+      --keep ) KEEP=1
+           shift
+           ;;
+      --match ) GLOB="$2"
+           shift 2
+           ;; 
+      --map ) MAP="$2"
+           shift 2
+           ;;
+      --in ) SPELL_IN="$2"
+	    shift 2
+           ;;
+      --out ) SPELL_OUT="$2"
+           shift 2
+           ;;
+      --ids ) IDS="$2"
+	   shift 2
+           ;;
+      --kegg* ) KEGG_ID="$2"
+           shift 2
+           ;;
+      --resume ) RESUME=1
+	   shift
+	   ;;
+      --skip ) SKIP=1
+           shift
+           ;;
+      --qdab ) QDAB=1
+	   shift
+	   ;;
+     --verbosity ) 
+	   if [[ $2 =~ [0-9]+ ]] ; then
+             VERBOSITY="$2"
+             shift 2
+           else
+             VERBOSITY=1
+             shift
+           fi
+           ;;
+
+       ## undocumented (may be removed)
+       --nosleipnir ) NOSLEIPNIR=1
+           shift
+           ;;
+
+       -* ) echo "$BN: unknown option $1"
+           exit 1
+           ;;
+      *  ) break
+           ;;
+  esac
+done
+
+######## GENERIC FUNCTIONS
+
+function die {
+    echo "$BN: $@" >&2
+    exit 1
+}
+
+# Set ABSOLUTE to the absolute pathname of $1
+function absolute {
+  local dir
+  if [ "${1:0:1}" != / ] ; then
+    if [ -d "$1" ] ; then
+      ABSOLUTE=$(cd $(dirname "$1"); pwd)
+    else 
+      dir=$(cd $(dirname "$1"); pwd)
+      ABSOLUTE="$dir"/$(basename "$1")
+    fi
+  else
+      ABSOLUTE="$1"
+  fi
+}
+
+function continuep {
+   local PROMPT="$1"
+   if [ -z "$1" ] ; then
+      PROMPT="Continue? [yN]"
+   fi
+   read -p "$PROMPT " x
+   case "$x" in
+     y | Y | yes | YES ) return
+     ;;
+   esac
+   exit
+}
+
+function verbose {
+  if [ "$VERBOSITY" -gt 0 ] ; then
+    echo "$@"
+  fi
+}
+
+# Syntax: safecd DIR [MESSAGE]
+function safecd {
+  local rc message
+  cd "$1"
+  if [ $? = 0 ] ; then return ; fi
+  rc=$?
+  if [ -n "$2" ] ; then
+    message="cd $1 failed; exiting ..."
+  else
+    message="$2"
+  fi
+  echo "$BN: $message"
+  exit $rc
+}
+
+function check-compiled {
+  local java="$1"
+  local class="${1/.java/.class}"
+  if [ ! -r "$SPELL_TOOLS/$class" ] ; then
+     (cd "$SPELL_TOOLS" ; javac "$java" ) || die "Unable to compile $java"
+  fi
+}
+
+# Usage: uptodate [ --versus BASE ] FILE ... || action
+# If BASE is specified and readable, then execute true if $RESUME and
+# all the $i are readable and uptodate with respect to BASE;
+# if BASE is not specified, then execute true if $RESUME and all the
+# $i are readable; in all other cases, execute false.
+function uptodate {
+  if [ -z "$RESUME" ] ; then false ; return ; fi
+  local BASE=
+  if [ "$1" = --versus ] ; then
+     BASE="$2"
+     shift 2
+     if [ ! -r "$BASE" ] ; then false ; return ; fi
+  fi
+  for f
+  do 
+    if [[ ! -r "$f" || ( -n "$BASE"  &&  "$BASE" -nt "$f" ) ]] ; then
+      false
+      return
+    fi
+  done
+  if [ $VERBOSITY -gt 0 ] ; then
+      if [ -z "$BASE" ] ; then
+        if [ $# -gt 1 ] ; then 
+          verbose "$BN: the files $@ already exist"
+        else
+          verbose "$BN: the file $@ already exists"
+        fi
+      else
+        if [ $# -gt 1 ] ; then 
+          verbose "$BN: the files $@ are uptodate"
+        else
+          verbose "$BN: the file $@ is uptodate"
+        fi
+      fi
+  fi
+  true
+}
+
+######## PIPELINE FUNCTIONS
+#1
+# Syntax: SeriesFamilyParser in out info
+function SeriesFamilyParser {
+  local in="$1"
+  local out="$2"
+  local info="$3"
+  # $SPELL_TOOLS/seriesFamilyParser.rb "$in" > "$out"
+  # GSE13219 causes "Java heap space" failure with default memory on Mac; 300m is sufficient, 200m is not.
+  verbose $JAVA -Xmx2g SeriesFamilyParser "$in" "$out" "$info"
+  $JAVA -Xmx2g SeriesFamilyParser "$in" "$out" "$info"
+  ## $JAVA GeoSeries       "$in" "$out" "$info"
+}
+
+#2
+# Syntax: MissingValues IN 
+# where FILE is a pcl file with a name of the form GSEnnn.*
+function MissingValues {
+  local pcl="$1"
+  local id="${1/.*/}"
+  #     MissingValues input    info     output max_mv_per_gene(%) min_required_samples max_allowed_in_dataset(%)
+  $JAVA MissingValues $pcl $id.info $id.mv.pcl  50                3                     50
+  # ... per Lars's SPELL Data Processing Pipeline documentation.
+}
+
+#3
+# Syntax: runKnnImpute .pcl .info
+function runKnnImpute {
+  local pcl="$1"
+  local info="$2"
+  local gse="${1/.*/}"
+  local out=$gse.knn.pcl
+  # KNNImputer has these defaults anyway:
+  # -k 10
+  # -d euclidean
+  # -m 0.7
+
+  # "KNNImputer does not perform correctly on raw single channel data ..."
+  # KNNImputer -i $pcl -o $out
+  # Some versions of runKnnImputer.rb require the SLEIPNIR argument to have a trailing /
+  if [ "$NOSLEIPNIR" ] ; then
+    echo $BN: SIMULATING KNNImputer
+    /bin/cp -p "$pcl" "$out"
+  else
+    $SPELL_TOOLS/runKnnImpute.rb "$pcl" "$info" "$SLEIPNIR"/ "$out"
+  fi
+}
+
+#4
+# Syntax: mapGeneNames pcl map
+function mapGeneNames {
+  local pcl="$1"
+  local map="$2"
+  local gse="${1/.*/}"
+  local out="$gse.mapped.pcl"
+  $SPELL_TOOLS/mapGeneNames.rb -v "$pcl" "$gse.info" "map=$map" "$out"
+}
+
+##############################################
+
+
+## PRELIMINARIES
+
+if [ -z "$KEGG_ID" ] ; then KEGG_ID="$DEFAULT_KEGG_ID" ; fi
+
+KNNImputer=$(which KNNImputer 2> /dev/null)
+if [ -n "$KNNImputer" ] ; then
+  SLEIPNIR=$(dirname "$KNNImputer")
+elif [ -x "$SPELL_TOOLS/KNNImputer" ] ; then
+  SLEIPNIR=${SPELL_TOOLS}
+elif [ "$NOSLEIPNIR" ] ; then
+  echo "$BN --nosleipnir ..."
+else
+  die Unable to find KNNimputer
+fi
+
+if [ -n "$QDAB" ] ; then
+  if [ -x $SLEIPNIR/Distancer ] ; then
+    Distancer=$SLEIPNIR/Distancer
+  else
+    Distancer=$(which Distancer 2> /dev/null) || die Unable to find Distancer
+  fi
+
+  if [ -x $SLEIPNIR/Dat2Dab ] ; then
+    Dat2Dab=$SLEIPNIR/Dat2Dab
+  else
+    Dat2Dab=$(which Dat2Dab 2> /dev/null) || die Unable to find Dat2Dab
+  fi
+fi
+
+check-compiled SeriesFamilyParser.java
+check-compiled MissingValues.java
+check-compiled MeanGenesThatAgree.java
+
+# Start with a directory of GSE*soft.gz and/or GSE*soft files
+
+if [ -z "$SPELL_IN" ] ; then
+  SPELL_IN="$DEFAULT_SPELL_IN"
+fi
+
+if [ -z "$SPELL_OUT" ] ; then
+  SPELL_OUT="$SPELL_DATA/$KEGG_ID"
+fi
+
+if [ ! -d "$SPELL_IN"  ] ; then die Unable to find input directory $SPELL_IN ; fi
+
+if [ ! -d "$SPELL_OUT" ] ; then mkdir "$SPELL_OUT" || die Unable to mkdir $SPELL_OUT ; fi
+
+if [ -z "$MAP" ] ; then
+   MAP="$KEGG_ID.map"
+elif [ ! -r "$MAP" -o -d "$MAP" ] ; then
+   die "Unable to read specified map file: $MAP"
+else
+  # Absolute path
+  absolute "$MAP"
+  MAP="$ABSOLUTE"
+fi
+
+# Create the file list
+
+TMPFILE="$BN.$$.tmp"
+TMP="$SPELL_OUT/$TMPFILE"
+
+
+if [ -n "$GLOB" ] ; then
+  if [ $# != 0 ] ; then die "the --match option cannot be specified together with IDs" ; fi
+  ls "$SPELL_IN"/$GLOB > "$TMP" || die no matching files in "$SPELL_IN/$GLOB"
+elif [ -n "$IDS" ] ; then
+  if [ $# != 0 ]     ; then die "the --ids option cannot be specified together with IDs" ; fi
+  if [ -n "$GLOB" ]  ; then die "the --ids and --match options are mutually exclusive"   ; fi
+  if [ ! -r "$IDS" ] ; then die "ids file $IDS was not found"                            ; fi
+  cat "$IDS" > $TMP
+else
+  echo > $TMP
+  for f
+  do
+      echo "$f" >> $TMP
+  done
+fi
+
+
+# We are about to "cd $SPELL_OUT" but need the absolute pathname for SPELL_IN
+SPELL_IN=$(cd "$SPELL_IN" ; pwd )
+
+if [ "$VERBOSITY" -gt 0 ] ; then
+cat <<EOF
+SPELL_IN=$SPELL_IN
+SPELL_OUT=$SPELL_OUT
+MAP=$MAP
+JAVA=$JAVA
+KEGG_ID=$KEGG_ID
+TMP=$TMP
+
+EOF
+fi
+
+if [ "$VERBOSITY" = -1 ] ; then exit ; fi
+
+###################
+safecd "$SPELL_OUT"
+###################
+
+if [ ! -r "$MAP" ] ; then
+   echo $BN: attempting to create $MAP ...
+   $ECHO $DN/parseEntrezGeneInfo -v --download "$SPELL_IN" --data .
+fi
+
+if [ ! -r "$MAP" ] ; then
+    die "Unable to find $MAP"
+fi
+
+# If $1 then emit it as part of a message; and
+# if $? is non-zero then "continue" (remarkably, it is propagated outside the function!)
+function maybe-skip {
+  local rc=$?
+  if [ -n "$1" -a -s "$1" ] ; then echo "$BN: see $1 for error messages" ; fi
+  if [ $rc != 0 ] ; then
+    echo "$BN: skipping remaining steps for $gse"
+    continue
+  fi
+}
+
+function maybe-remove {
+  if [ -z "$KEEP" ] ; then 
+    # Remove the intermediate .pcl files
+    /bin/rm $gse.knn.pcl $gse.mapped.pcl $gse.mv.pcl 2> /dev/null
+  fi
+}
+
+function execute {
+  if [ "$VERBOSITY" -gt 1 ] ; then echo "$@" ; fi
+  $ECHO "$@"
+}
+
+while read spec etc
+# for spec in GSE13219
+do
+  if [ -z "$spec" -o "${spec:0:1}" = "#" ] ; then continue ; fi
+
+  verbose "$spec ..."
+  # Strip the suffix if any:
+  gse="${spec/_family*/}"
+  soft="$SPELL_IN/${gse}_family.soft"
+  gz="$soft.gz"
+
+  if [ -n "$SKIP" -a -r "$gse.final.pcl" ] ; then
+      echo "Skipping $gse as --skip was specified and $gse.final.pcl already exists"
+      continue
+  fi
+
+  verbose $soft ...
+  if [ ! -r "$soft" -a ! -r "$gz" ] ; then
+      echo "$BN: skipping $gse as corresponding file not found"
+      continue
+  fi
+
+  if [ ! -r "$soft" ] ; then
+     execute gunzip -c "$gz" > "$soft"
+     REMOVE="$soft"     
+  else
+     REMOVE=
+  fi
+
+  verbose "#1"
+  # SeriesFamilyParser.rb does not produce an info file 
+  ## Ruby version: SeriesFamilyParser "$soft" $gse.rb.pcl
+  ## Java version:
+  uptodate --versus "$soft" "$gse.sfp.pcl" "$gse.info" ||\
+    execute SeriesFamilyParser "$soft" "$gse.sfp.pcl" "$gse.info"
+  ## GeoSeries "$soft" "$gse.GeoSeries.pcl" "$gse.GeoSeries.info" 
+  maybe-skip
+
+  if [ -n "$REMOVE" -a -z "$KEEP" ]; then
+    execute /bin/rm "$REMOVE" 
+  fi
+
+  verbose "#2"
+  uptodate --versus "$gse.sfp.pcl" "$gse.mv.pcl" ||\
+    execute MissingValues $gse.sfp.pcl
+  maybe-skip
+
+  verbose "#3"
+  uptodate --versus "$gse.mv.pcl"  "$gse.knn.pcl" ||\
+    execute runKnnImpute $gse.sfp.pcl $gse.info
+  maybe-skip
+
+  verbose "#4"
+  uptodate --versus "$gse.knn.pcl" "$gse.mapped.pcl" ||\
+    execute mapGeneNames $gse.knn.pcl $KEGG_ID.map 2> "$gse.mapped.pcl.err"
+  maybe-skip "$gse.mapped.pcl.err"
+
+  verbose "#5"
+  # agrees with spell.xml (whence -Xmx2g)
+  uptodate --versus "$gse.mapped.pcl"  "$gse.averaged.pcl" ||\
+    execute $JAVA -Xmx2g MeanGenesThatAgree $gse.mapped.pcl $gse.averaged.pcl 2> $gse.averaged.pcl.err
+  maybe-skip "$gse.averaged.pcl.err"
+
+  verbose "#6"
+  # collectFinalData.rb might simply mv the input to ${DIR}GSEnnn.final.pcl where DIR is the last argument.
+  # agrees with spell.xml
+  # Trailing slashes for the directories are IMPORTANT!
+  # verbose $SPELL_TOOLS/collectFinalData.rb  $gse.averaged.pcl $gse.info $SPELL_TOOLS/ ./
+  uptodate --versus "$gse.averaged.pcl" "$gse.final.pcl" ||\
+    execute $SPELL_TOOLS/collectFinalData.rb  $gse.averaged.pcl $gse.info $SPELL_TOOLS/ ./
+  maybe-skip
+
+  if [ -z "$QDAB" ] ; then
+     verbose ... $gse.final.pcl done
+     maybe-remove
+     continue
+  fi
+
+  verbose "#7"
+  # verbose   $SLEIPNIR/Distancer -i $gse.final.pcl -o $gse.dat
+  uptodate --versus $gse.final.pcl  "$gse.dat" ||\
+    execute $Distancer -i $gse.final.pcl -o $gse.dat
+  maybe-skip
+
+  verbose "#8"
+  # verbose $Dat2Dab -i $gse.dat -o $gse.qdab
+  uptodate --versus "$gse.dat" "$gse.qdab" ||\
+    execute $Dat2Dab -i $gse.dat -o $gse.qdab
+  maybe-skip
+
+  verbose ... $gse.qdab done
+  maybe-remove
+
+done < "$TMPFILE"
+
+/bin/rm "$TMPFILE"

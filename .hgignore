@@ -1,0 +1,6 @@
+syntax: glob
+check-spell-tools
+.svn
+*~
+*.class
+data
