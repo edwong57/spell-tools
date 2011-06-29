@@ -1,5 +1,5 @@
 // Based on Troilkatt version that was current as of Feb 4, 2011
-// with mods by peak@princeton.edu (spelling corrections and changes at //peak)
+// with mods by peak@princeton.edu (spelling corrections, and changes at //peak)
 
 //peak:
 package edu.princeton.function.tools;
@@ -60,7 +60,7 @@ public class SeriesFamilyParser {
 		keywords.put("Platform probe ID", new String[] {"ID"}); //# List of keywords used to identify the platform probe column number	                          
 		// List of keywords used to detect the gene names column number (in prioritized order)                
 		//keywords.put("ngn",  {"ORF", "GB_ACC", "GENOME_ACC", "RANGE_GB", "GB_LIST", "Gene_ID", "CLONE_ID", "Genename", "GENE_NAME", "Common Name", "Gene Symbol", "GENE_SYMBOL"});
-		// Conservative lis
+		// Conservative list
 		keywords.put("Gene names", new String[] {"GENE_SYMBOL", "GENE SYMBOL", "GENE_NAME", "GENE NAME", "GENE ID", "ORF", "DDB"});		
 		//keywords.put("Gene names", new String[] {"GENE_SYMBOL", "GENE SYMBOL", "ORF", "GB_ACC", "GENOME_ACC", "RANGE_GB", "GB_LIST", "DDB"});
 		// List of keywords used to detect the sample probe ID    
@@ -743,7 +743,22 @@ public class SeriesFamilyParser {
 		finfo.println("File\tDatasetID\tOrganism\tPlatform\tValueType\t#channels\tTitle\tDescription\tPubMedID\t" +
 				"#features\t#samples\tdate\tMin\tMax\tMean\t#Neg\t#Pos\t#Zero\t#MV\t#Total\t#Channels\t" +
 				"logged\tzerosAreMVs\tMVcutoff");
-		finfo.print(new File(softFilename).getName());
+
+                //peak 2011.06.28: Support the GSEnnn_setA_family.soft file-naming convention.
+		// That is, if the filename begins with the value of "Series_geo_accession" (e.g. GSE123)
+		// and contains the string "_family.", then set DatasetID to the substring of the
+		// filename prior to "_family.".
+		// For standard GEO "soft" files, this prefix is the "Series_geo_accession" anyway.
+		// Example: GSE1986_setA_family.soft => GSE1986_setA
+		// Rationale:
+		// The "DatasetID" is used for matching, and some values in an .info file 
+		// are not determined simply by the value of dset
+                String softname = new File(softFilename).getName();
+		int idx = softname.indexOf("_family.");
+		if ( (idx > -1) && softname.startsWith(dset + "_")) {
+		    dset = softname.substring(0, idx);
+		}
+		finfo.print(softname);
 		finfo.print("\t" + dset + "\t" + org + "\t" + platform + "\t" + valType + "\t" + chanCount + "\t" + title);
 		finfo.print("\t" + desc + "\t" + pmid + "\t" + featCount + "\t" + sampCount + "\t" + date);
 		finfo.print("\t" + min + "\t" + max + "\t" + mean + "\t" + numNeg + "\t" + numPos + "\t");
@@ -879,6 +894,22 @@ public class SeriesFamilyParser {
 		return maxIndex;
 	}
 
+        //peak
+	public static void usage() {
+	    System.err.println("Usage: input.soft output.pcl output.info [gene.map]");
+	}
+
+        //peak
+	public static void help() {
+	    System.out.println("Usage: input.soft output.pcl output.info [gene.map]");
+	    System.out.println("If the input filename begins with the string \"{ACCESSION}_{NAME}_family.\" where");
+	    System.out.println("{ACCESSION} is the value of 'Series_geo_accession' and {NAME} is a character string,");
+            System.out.println("then the DatasetID is set to {ACCESSION}_{NAME}");
+	    System.out.println("<gene.map> is optional:");
+	    System.out.println("  if given, it should be the filename of gene names (gene name<tab>gene ID);");
+	    System.out.println("  otherwise, the gene name column is not predicted based on gene names.");
+	}
+
 	/**
 	 * Debug
 	 * 
@@ -887,9 +918,14 @@ public class SeriesFamilyParser {
 	 */
 	public static void main(String[] argv) throws IOException {
 		SeriesFamilyParser dset = null;
+		if (argv.length > 0
+                    && ( argv[0].equals("-h") || argv[0].equals("--help"))) {
+		    help();
+		    System.exit(0);
+		}
 		if (argv.length < 3) {
-			System.err.println("Usage: input.soft output.pcl output.info <gene.map>");
-			System.exit(-1);
+		    usage();
+		    System.exit(-1);
 		}
 		else if (argv.length == 3) {
 			dset = new SeriesFamilyParser(argv[0], argv[1], argv[2], null);
