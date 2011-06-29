@@ -1,0 +1,64 @@
+#!/bin/bash
+# Copyright (C) 2011 peak@princeton.edu
+# License: Creative Commons Attribution-NonCommerical-ShareAlike 3.0 Unported (CC BY-NC-SA 3.0)
+# See http://creativecommons.org/licenses/by-nc/3.0/
+# Attribution shall include the copyright notice above.
+
+# peak@princeton.edu 2011
+# For help: $0 --help
+
+VERSION=0.1
+
+# Requires: 
+
+BN=`basename $0`
+DN=$(cd $(dirname $0); pwd)
+DNUP=$(cd "$DN/.." ; pwd)
+
+function help {
+cat <<EOF
+Syntax: $BN ...
+
+Version: $BN $VERSION
+
+See source for copyright and licensing details.
+EOF
+}
+
+while [ "$1" ]
+do case "$1" in
+      -h | --help ) help
+           exit
+           ;;
+      -v | --verbose ) VERBOSE=1
+           shift
+           ;;
+      -* ) echo "$BN: unknown option $1"
+           exit 1
+           ;;
+      *  ) break
+           ;;
+  esac
+done
+
+function die {
+    echo "$BN: $@" >&2
+    exit 1
+}
+
+
+JPKG=edu.princeton.function.tools
+
+JREL=${JPKG//.//}
+JPATH="$DNUP/$JREL"
+
+java=DivLogNorm
+
+# opt=-Xlint:unchecked
+
+(cd "$JPATH" ; javac $opt "$java.java" ) || die "Unable to compile $java.java"
+
+(cd "$DNUP" ; jar -cef $JPKG.DivLogNorm bin/$java.jar "$JREL"/${java}*.class )
+
+# java -jar DivLogNorm.jar
+
