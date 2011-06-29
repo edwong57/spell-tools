@@ -19,6 +19,8 @@ import java.util.Set;
  *
  * Created on Jun 9, 2005
  *
+ * //peak: 2011: add package; attend to "unchecked" warnings (use ArrayList<TYPE>); rm utilArray
+ *
  * TODO To change the template for this generated file go to
  * Window - Preferences - Java - Code Style - Code Templates
  */
@@ -36,23 +38,21 @@ public class DivLogNorm {
 		public String 	name;
 	    public double[] exprLvls;
 	    public int		id;
-	    public ArrayList	utilArray;
 
 	    public Gene (String _orf, String _name) {
 	    	orf = _orf;
 	    	name = _name;
-	    	utilArray = new ArrayList();
 	    }   
 	}
 	
 	
-	public ArrayList genes;
-	public ArrayList exprNames;
+	public ArrayList<Gene> genes;
+	public ArrayList<String> exprNames;
 	int numExprs;
 
 	public DivLogNorm() {
-		genes = new ArrayList();
-		exprNames = new ArrayList();
+		genes = new ArrayList<Gene>();
+		exprNames = new ArrayList<String>();
 		numExprs = 0;
 	}
 
@@ -163,7 +163,7 @@ public class DivLogNorm {
 
 	public void logTransformAll() {
 		for (int i = 0; i < genes.size(); i++) {
-			Gene g = (Gene) genes.get(i);
+			Gene g = genes.get(i);
 
 			for (int j = 0; j < g.exprLvls.length; j++) {
 				if (!Double.isNaN(g.exprLvls[j])) {
@@ -181,7 +181,7 @@ public class DivLogNorm {
 
 	public void normalizeAllGenes() {
 		for (int i = 0; i < genes.size(); i++) {
-			Gene g = (Gene) genes.get(i);
+			Gene g = genes.get(i);
 			//Find the mean and standard deviation
 			double mean = 0;
 			double stdDev = 0;
@@ -217,14 +217,14 @@ public class DivLogNorm {
 
 	public void divideAllGenesByIndividualMedians() {
 		for (int i=0; i<genes.size(); i++) {
-			Gene g = (Gene) genes.get(i);
-			ArrayList exprs = new ArrayList();
+			Gene g = genes.get(i);
+			ArrayList<Double> exprs = new ArrayList<Double>();
 			for (int j=0; j<g.exprLvls.length; j++) {
 				if (!Double.isNaN(g.exprLvls[j]))
 					exprs.add(g.exprLvls[j]);
 			}
 			Double[] expArr = new Double [exprs.size()];
-			expArr = (Double[])exprs.toArray(expArr);
+			expArr = exprs.toArray(expArr);
 			Arrays.sort(expArr);
 			
 			double median = expArr[(int)(expArr.length/2.0)];
@@ -250,7 +250,7 @@ public class DivLogNorm {
 		System.out.println();
 
 		for (int i = 0; i < genes.size(); i++) {
-			Gene g = (Gene) genes.get(i);
+			Gene g = genes.get(i);
 			System.out.print(g.orf + "\t" + g.name + "\t1");
 			DecimalFormat threePlaces = new DecimalFormat("0.000");
 			for (int j = 0; j < g.exprLvls.length; j++) {
