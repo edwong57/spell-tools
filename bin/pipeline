@@ -13,7 +13,7 @@
 # peak@princeton.edu 2011
 # For help: $0 --help
 
-VERSION=0.1.9
+VERSION=0.1.10
 
 # 0.1.4 - tested on Mac OSX; sometimes redirect stderr to .err file; --skip based on final.pcl
 # 0.1.5 - --resume
@@ -21,6 +21,7 @@ VERSION=0.1.9
 # 0.1.7 - since MeanGenesThatAgree uses -Xmx2g there is presumably no harm in using the same limit elsewhere
 # 0.1.8 - parseEntrezGeneInfo directories
 # 0.1.9 - gse=GSEnnn or GSEnnn_setABC
+# 0.1.10 - package edu.princeton.function.tools;
 
 # Requires the following:
 #  java, javac
@@ -44,7 +45,10 @@ SPELL_DATA="$DNUP/data"
 
 DEFAULT_SPELL_IN=$SPELL_DATA/download
 
-JAVA="java -cp $SPELL_TOOLS"
+JPKG=edu.princeton.function.tools
+JPATH=$DNUP/${JPKG//.//}
+
+JAVA="java -cp $DNUP"
 
 function help {
 cat <<EOF
@@ -288,9 +292,9 @@ function safecd {
 
 function check-compiled {
   local java="$1"
-  local class="${1/.java/.class}"
-  if [ ! -r "$SPELL_TOOLS/$class" ] ; then
-     (cd "$SPELL_TOOLS" ; javac "$java" ) || die "Unable to compile $java"
+  local class="${1/%.java/.class}"
+  if [ ! -r "$JPATH/$class" ] ; then
+     (cd "$JPATH" ; javac "$java" ) || die "Unable to compile $java"
   fi
 }
 
@@ -341,8 +345,8 @@ function SeriesFamilyParser {
   local info="$3"
   # $SPELL_TOOLS/seriesFamilyParser.rb "$in" > "$out"
   # GSE13219 causes "Java heap space" failure with default memory on Mac; 300m is sufficient, 200m is not.
-  verbose $JAVA -Xmx2g SeriesFamilyParser "$in" "$out" "$info"
-  $JAVA -Xmx2g SeriesFamilyParser "$in" "$out" "$info"
+  verbose $JAVA -Xmx2g $JPKG.SeriesFamilyParser "$in" "$out" "$info"
+  $JAVA -Xmx2g $JPKG.SeriesFamilyParser "$in" "$out" "$info"
   ## $JAVA GeoSeries       "$in" "$out" "$info"
 }
 
@@ -352,8 +356,10 @@ function SeriesFamilyParser {
 function MissingValues {
   local pcl="$1"
   local id="${1/.*/}"
-  #     MissingValues input    info     output max_mv_per_gene(%) min_required_samples max_allowed_in_dataset(%)
-  $JAVA MissingValues $pcl $id.info $id.mv.pcl  50                3                     50
+  #           MissingValues input    info     output max_mv_per_gene(%) 
+  #                                             min_required_samples
+  #                                               max_allowed_in_dataset(%)
+  $JAVA $JPKG.MissingValues $pcl $id.info $id.mv.pcl  50 3 50
   # ... per Lars's SPELL Data Processing Pipeline documentation.
 }
 
@@ -586,7 +592,7 @@ do
   verbose "#5"
   # agrees with spell.xml (whence -Xmx2g)
   uptodate --versus "$gse.mapped.pcl"  "$gse.averaged.pcl" ||\
-    execute $JAVA -Xmx2g MeanGenesThatAgree $gse.mapped.pcl $gse.averaged.pcl 2> $gse.averaged.pcl.err
+    execute $JAVA -Xmx2g $JPKG.MeanGenesThatAgree $gse.mapped.pcl $gse.averaged.pcl 2> $gse.averaged.pcl.err
   maybe-skip "$gse.averaged.pcl.err"
 
   verbose "#6"

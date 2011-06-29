@@ -1,8 +1,8 @@
 // Based on Troilkatt version that was current as of Feb 4, 2011
 // with mods by peak@princeton.edu (spelling corrections and changes at //peak)
 
-//peak: comment out following line
-// package edu.princeton.function.troilkatt.tools;
+//peak:
+package edu.princeton.function.tools;
 
 import java.io.BufferedReader;
 import java.io.File;

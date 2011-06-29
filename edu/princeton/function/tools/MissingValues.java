@@ -1,7 +1,8 @@
 /**
  * This version was in sync with SVN troilkatt repository (svn://gen-svn.princeton.edu/hefalmp) as of 2011.05.27
-   package edu.princeton.function.troilkatt.tools;
  */
+
+package edu.princeton.function.tools;
 
 import java.io.BufferedReader;
 import java.io.File;
