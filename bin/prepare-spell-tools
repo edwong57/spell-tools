@@ -7,17 +7,27 @@
 # peak@princeton.edu 2011
 # For help: $0 --help
 
-VERSION=0.1
+VERSION=0.1.1
 
-# Requires: 
+# Requires: javac jar
 
 BN=`basename $0`
 DN=$(cd $(dirname $0); pwd)
 DNUP=$(cd "$DN/.." ; pwd)
 
+# The list of bin/*.jar files:
+jars=DivLogNorm
+
 function help {
 cat <<EOF
 Syntax: $BN ...
+
+This script is primarily intended for administrators of the "spell-tools" repository.
+
+Its purpose is to ensure that files in the repository are kept
+uptodate with respect to other files in the repository.
+
+Currently, this script manages the following .jar files: $jars
 
 Version: $BN $VERSION
 
@@ -52,13 +62,13 @@ JPKG=edu.princeton.function.tools
 JREL=${JPKG//.//}
 JPATH="$DNUP/$JREL"
 
-java=DivLogNorm
-
 # opt=-Xlint:unchecked
 
-(cd "$JPATH" ; javac $opt "$java.java" ) || die "Unable to compile $java.java"
+for java in $jars
+do
+ (cd "$JPATH" ; javac $opt "$java.java" ) || die "Unable to compile $java.java"
+ (cd "$DNUP" ; jar -cef $JPKG.DivLogNorm bin/$java.jar "$JREL"/${java}*.class )
+done
 
-(cd "$DNUP" ; jar -cef $JPKG.DivLogNorm bin/$java.jar "$JREL"/${java}*.class )
-
-# java -jar DivLogNorm.jar
+# To run: java -jar DivLogNorm.jar
 
