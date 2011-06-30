@@ -13,7 +13,7 @@
 # peak@princeton.edu 2011
 # For help: $0 --help
 
-VERSION=0.1.10
+VERSION=0.1.11
 
 # 0.1.4 - tested on Mac OSX; sometimes redirect stderr to .err file; --skip based on final.pcl
 # 0.1.5 - --resume
@@ -22,6 +22,7 @@ VERSION=0.1.10
 # 0.1.8 - parseEntrezGeneInfo directories
 # 0.1.9 - gse=GSEnnn or GSEnnn_setABC
 # 0.1.10 - package edu.princeton.function.tools;
+# 0.1.11 - --sfp option
 
 # Requires the following:
 #  java, javac
@@ -35,18 +36,18 @@ VERBOSITY=0
 ORGANISM="Saccharomyces cerevisiae"
 DEFAULT_KEGG_ID=sce
 
-BN=`basename $0`
-DN=$(cd $(dirname $0); pwd)
+BN=$(basename "$0")
+DN=$(cd $(dirname "$0"); pwd)
 DNUP=$(cd "$DN/.." ; pwd)
 
 SPELL_TOOLS="$DN"
 
 SPELL_DATA="$DNUP/data"
 
-DEFAULT_SPELL_IN=$SPELL_DATA/download
+DEFAULT_SPELL_IN="$SPELL_DATA/download"
 
 JPKG=edu.princeton.function.tools
-JPATH=$DNUP/${JPKG//.//}
+JPATH="$DNUP/${JPKG//.//}"
 
 JAVA="java -cp $DNUP"
 
@@ -140,6 +141,8 @@ Options:
   --keep          :: keep intermediate data files that would otherwise
                      be deleted (see below).
   --qdab          :: also run Distancer and Dat2Dab to produce a .qdab file
+  --sfp           :: only run the first stage of the pipeline (SeriesFamilyParser) 
+                     to produce .sfp.pcl and .info files
 
 Notes:
 
@@ -208,6 +211,9 @@ do case "$1" in
       --skip ) SKIP=1
            shift
            ;;
+      --sfp ) SFP=1
+	   shift
+	   ;;
       --qdab ) QDAB=1
 	   shift
 	   ;;
@@ -221,7 +227,7 @@ do case "$1" in
            fi
            ;;
 
-       ## undocumented (may be removed)
+       ## undocumented
        --nosleipnir ) NOSLEIPNIR=1
            shift
            ;;
@@ -290,6 +296,7 @@ function safecd {
   exit $rc
 }
 
+# Global: JPATH
 function check-compiled {
   local java="$1"
   local class="${1/%.java/.class}"
@@ -396,6 +403,34 @@ function mapGeneNames {
   $SPELL_TOOLS/mapGeneNames.rb -v "$pcl" "$gse.info" "map=$map" "$out"
 }
 
+
+# Set KNNImputer and SLEIPNIR or die; then maybe check other SLEIPNIR dependencies.
+function check-sleipnir {
+  KNNImputer=$(which KNNImputer 2> /dev/null)
+  if [ -n "$KNNImputer" ] ; then
+    SLEIPNIR=$(dirname "$KNNImputer")
+  elif [ -x "$SPELL_TOOLS/KNNImputer" ] ; then
+    SLEIPNIR=${SPELL_TOOLS}
+  elif [ "$NOSLEIPNIR" ] ; then
+    echo "$BN --nosleipnir ..."
+  else
+    die Unable to find KNNImputer
+  fi
+
+  if [ -n "$QDAB" ] ; then
+    if [ -x "$SLEIPNIR/Distancer" ] ; then
+      Distancer="$SLEIPNIR/Distancer"
+    else
+      Distancer=$(which Distancer 2> /dev/null) || die Unable to find Distancer
+    fi
+    if [ -x "$SLEIPNIR/Dat2Dab" ] ; then
+      Dat2Dab="$SLEIPNIR/Dat2Dab"
+    else
+      Dat2Dab=$(which Dat2Dab 2> /dev/null) || die Unable to find Dat2Dab
+    fi
+  fi
+}
+
 ##############################################
 
 
@@ -403,34 +438,14 @@ function mapGeneNames {
 
 if [ -z "$KEGG_ID" ] ; then KEGG_ID="$DEFAULT_KEGG_ID" ; fi
 
-KNNImputer=$(which KNNImputer 2> /dev/null)
-if [ -n "$KNNImputer" ] ; then
-  SLEIPNIR=$(dirname "$KNNImputer")
-elif [ -x "$SPELL_TOOLS/KNNImputer" ] ; then
-  SLEIPNIR=${SPELL_TOOLS}
-elif [ "$NOSLEIPNIR" ] ; then
-  echo "$BN --nosleipnir ..."
-else
-  die Unable to find KNNimputer
-fi
-
-if [ -n "$QDAB" ] ; then
-  if [ -x $SLEIPNIR/Distancer ] ; then
-    Distancer=$SLEIPNIR/Distancer
-  else
-    Distancer=$(which Distancer 2> /dev/null) || die Unable to find Distancer
-  fi
-
-  if [ -x $SLEIPNIR/Dat2Dab ] ; then
-    Dat2Dab=$SLEIPNIR/Dat2Dab
-  else
-    Dat2Dab=$(which Dat2Dab 2> /dev/null) || die Unable to find Dat2Dab
-  fi
-fi
+if [ -z "$SFP" ] ; then check-sleipnir ; fi
 
 check-compiled SeriesFamilyParser.java
-check-compiled MissingValues.java
-check-compiled MeanGenesThatAgree.java
+
+if [ -z "$SFP" ] ; then 
+  check-compiled MissingValues.java
+  check-compiled MeanGenesThatAgree.java
+fi
 
 # Start with a directory of GSE*soft.gz and/or GSE*soft files
 
@@ -569,6 +584,8 @@ do
     execute SeriesFamilyParser "$soft" "$gse.sfp.pcl" "$gse.info"
   ## GeoSeries "$soft" "$gse.GeoSeries.pcl" "$gse.GeoSeries.info" 
   maybe-skip
+
+  if [ -n "$SFP" ] ; then continue ; fi
 
   if [ -n "$REMOVE" -a -z "$KEEP" ]; then
     execute /bin/rm "$REMOVE" 
