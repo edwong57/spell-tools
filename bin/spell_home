@@ -1,0 +1,46 @@
+#!/bin/bash
+#
+# This script illustrates the use of the function spell_home, which attempts to set
+# $SPELL_HOME based on the environment, $0, and readlink $0
+
+# Requires: dirname, readlink
+
+# peak@princeton.edu 2010
+
+# Set SPELL_HOME to $1 if that is a plausible value:
+function check_SPELL_HOME {
+  if [ -d "$1/spell_web" -a -d "$1/GeneralSPELL" -a -r "$1/spell_web/script/server" ] ; then
+    SPELL_HOME="$1"
+  else
+    SPELL_HOME=
+  fi
+}
+
+# Set SPELL_HOME if a plausible value can be found:
+function spell_home {
+  local REAL
+  local DN=`dirname $0`
+
+  if [ "$1" ] ; then
+    check_SPELL_HOME "$1"
+    if [ "$SPELL_HOME" ] ; then return ; fi
+  fi
+  
+  check_SPELL_HOME `(cd "$DN/.." ; pwd )`
+  if [ "$SPELL_HOME" ] ; then return ; fi
+
+  REAL=$(readlink "$0" 2> /dev/null)
+  if [ "$REAL" -a "$REAL" != "$0" ] ; then
+     DN=`dirname "$REAL"`
+     check_SPELL_HOME  `(cd "$DN/../.."; pwd )`
+     if [ "$SPELL_HOME" ] ; then return ; fi
+     check_SPELL_HOME  `(cd "$DN/.."; pwd )`
+     if [ "$SPELL_HOME" ] ; then return ; fi
+  fi
+}
+
+spell_home $SPELL_HOME
+
+echo SPELL_HOME is now $SPELL_HOME 
+
+

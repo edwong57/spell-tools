@@ -1,0 +1,280 @@
+#!/bin/bash
+# peak@princeton.edu 2010.03.05
+
+# For help: $0 -h
+
+# If SPELL_HOME is not available in the environment,
+# an attempt to read it from .spellrc in the same directory as this script will be made.
+
+# However we get SPELL_PCL from config.txt unconditionally.
+
+TMP=/tmp/addExprs.$$
+Xmx=-Xmx2g
+
+ECHO=
+
+# For testing:
+# SPELL_DATASETS_SUPPLEMENT=/home/peak/data/yeast/SPELL_DATASETS_2
+# TMP=/tmp/addExprs
+# ECHO=echo
+# VERBOSE=1
+
+############################# AVOID CHANGES BELOW THIS LINE ########################
+
+### Global variables:
+BN=`basename "$0"`
+DN=`dirname "$0"`
+error=
+
+
+# Syntax: set_value KEY FILE
+# set $value to be the value of KEY in FILE if the file exists.
+# The file is assumed to specify KEY=VALUE but may have #-style comments.
+function set_value {
+  if [ -r "$2" ] ; then
+    value=`grep '^ *'"$1"' *=' "$2" | sed -e 's/^[^=]*= *\([^#]*\)/\1/'`
+  fi
+}
+
+if [ "$SPELL_HOME" = "" ] ; then
+  set_value SPELL_HOME "$DN/.spellrc"
+  SPELL_HOME="$value"
+fi
+
+# If $DN is a symbolic link then follow it back:
+if [ -z "$SPELL_HOME" -a -h "$0" ] ; then
+  DN=$(readlink "$0" 2> /dev/null)
+  DN=$(dirname "$DN")
+  set_value SPELL_HOME "$DN/.spellrc"
+  SPELL_HOME="$value"
+fi
+
+### Functions:
+
+function help {
+cat <<EOF
+
+Syntax: $BN [ OPTIONS ] SPELL_DATASETS_SUPPLEMENT
+
+This script supports the incremental addition of new datasets, as
+specified in the file "SPELL_DATASET_SUPPLEMENT". to SPELL. It does so
+by generating an "expressionTable.txt" file suitable for loading into
+the MySQL database.
+
+If requested, this script will also load the generated file into the
+MySQL database after prompting for a userid and password.
+
+The file SPELL_DATASETS_SUPPLEMENT must have the same format as SPELL_DATASETS.
+
+PREREQUISITES:
+ a) The file SPELL_DATASETS_SUPPLEMENT should already have been uplodaded to the
+    MySQL database using the web-based SPELL admin interface.
+ b) The "information files" should have been updated using the "Recreate Info Files" 
+    feature of the the web-based SPELL admin interface.
+
+Options:
+  -d DATABASE :: the MySQL database to be updated.
+  -q          :: query the database to determine if the expression data 
+                 has already been uploaded.
+  -v          :: verbose
+  -Xmx*       :: the Xmx parameter to be used when invoking java, e.g. -Xmx2g
+
+The SPELL home directory will be inferred from the environment variable SPELL_HOME
+if it is set. Otherwise, an attempt will be made to determine the value based on
+the .spellrc file in the directory in which this script exists will be made.
+
+Examples:
+
+ $BN ~/data/SPELL_DATASETS_2
+
+ $BN -v -q -d yeast_spell_development ~/data/yeast/SPELL_DATASETS_2
+
+EOF
+}
+
+function cleanup {
+  verbose $BN:removing all files in $TMP
+  rm $TMP/*
+  rmdir $TMP
+}
+
+function verbose {
+  if [ "$VERBOSE" ] ; then
+    echo "$@"
+  fi
+}
+
+# Set $user and $password
+# Syntax: setUserPassword PROMPT
+function setUserPassword {
+  local etc
+  if [ -z "$user" ] ; then
+    read -p "$1" user etc
+    if [ -z "$user" ] ; then exit ; fi
+  fi
+  if [ -z "$password" ] ; then
+    read -p "Enter the password for $user: " password etc
+  fi
+}
+
+# For each argument _ run the MySQL query:
+# select dsetID, count(*) from exprs where dsetID = '_';
+#
+# An alternative would be to construct this query:
+# select dsetID, count(*) from exprs where dsetID in ( .... ) group by dsetID;
+#
+function query {
+  local SQL=$TMP/query.sql
+  local id
+  for id
+  do
+    echo "select dsetID, count(*) from exprs where dsetID = '$id';" >> $SQL
+  done
+  verbose cat $SQL :: mysql -u "$user" -p"$password" "$DATABASE"
+  echo "dsetID	count(*)"
+  cat $SQL | mysql --skip-column-names -u "$user" -p"$password" "$DATABASE"
+  rm $SQL
+}
+
+
+### Options:
+
+looking=1
+while [ $looking = 1 -a $# != 0 ]
+do case "$1" in
+      -h | --help )
+           help
+           exit
+           ;;
+      -d ) DATABASE="$2"
+           shift 2
+           ;;
+      -q ) QUERY=1
+           shift 1
+           ;;
+      -v ) VERBOSE=1
+           shift 1
+           ;;
+
+      -Xmx* ) Xmx="$1"
+           shift 1
+           ;;
+      -*  ) 
+           echo "$BN: unrecognized option: $1"
+           exit 1
+           ;;
+      *  )
+           SPELL_DATASETS_SUPPLEMENT="$1"
+           shift
+           looking=0
+           ;;
+  esac
+  
+done
+
+
+### Preliminary checks
+mkdir -p $TMP
+
+verbose "Note: SPELL_HOME=$SPELL_HOME"
+
+
+if [ -z "$SPELL_DATASETS_SUPPLEMENT" ] ; then
+  echo "$BN: a SPELL_DATASETS_SUPPLEMENT file must be specified."
+  exit 1
+fi
+
+for f in "$SPELL_HOME/spell_web/config/config.txt" \
+         "$SPELL_DATASETS_SUPPLEMENT" \
+         "$SPELL_HOME/GeneralSPELL/src/CreateExpressionTable.class"
+do
+  if [ ! -r "$f" ] ; then
+    echo "$BN: file not found: $f"
+    exit 1
+  fi
+done
+
+# Determine SPELL_PCL from config.txt
+# sed may be buggy so strip off trailing / separately.
+SPELL_PCL=`sed 's,^.*	\([^	]*\)$,\1,' "$SPELL_HOME/spell_web/config/config.txt"`
+SPELL_PCL=`echo "$SPELL_PCL" | sed 's,/$,,'`
+
+for d in "$SPELL_PCL"
+do
+  if [ ! -d "$d" ] ; then
+    echo "$BN: directory not found: $d"
+    exit 1
+  fi
+done
+
+awk -F'	' '{print $2}' "$SPELL_DATASETS_SUPPLEMENT" > $TMP/files
+
+for f in `cat $TMP/files`
+do
+  if [ -r "$SPELL_PCL/$f" ] ; then
+    verbose "Verified existence of $SPELL_PCL/$f"
+  else
+    echo "$BN: $f not found in $SPELL_PCL"
+    error=1
+  fi
+done
+
+if [ "$error" ] ; then
+  cleanup
+  exit 1
+fi
+
+### Proceed:
+
+# Generate a new dataset_list.txt:
+if [ -r "$TMP/dataset_list.txt" ] ; then
+  rm "$TMP/dataset_list.txt"
+fi
+
+for f in `cat $TMP/files`
+do
+  grep '	'"$f"'$' $SPELL_HOME/spell_web/config/dataset_list.txt >> $TMP/dataset_list.txt
+done
+
+if [ "$QUERY" = 1 ] ; then
+  setUserPassword "Enter the MySQL userid with authority to view the data: "
+  query `awk '{print $1}' $TMP/dataset_list.txt`
+  exit
+fi
+
+
+# Generate a new config.txt file
+awk -F' ' 'BEGIN {tab="	"}
+   {print $1 tab $2 tab "'"$TMP/dataset_list.txt"'" tab $4}' $SPELL_HOME/spell_web/config/config.txt > $TMP/config.txt
+
+
+cd "$SPELL_HOME/GeneralSPELL/src"
+if [ -z "$ECHO" ] ; then
+  verbose java $Xmx CreateExpressionTable $TMP/config.txt ...
+  java $Xmx CreateExpressionTable $TMP/config.txt > $TMP/expressionTable.txt
+else
+  echo java $Xmx CreateExpressionTable $TMP/config.txt ...
+fi
+
+verbose Generated:
+verbose $TMP/dataset_list.txt
+verbose $TMP/config.txt
+verbose $TMP/expressionTable.txt
+
+if [ -z "$DATABASE" ] ; then
+   echo You may wish to use the SPELL admin interface to upload the file,
+   echo which is currently located in $TMP/expressionTable.txt
+   exit
+fi
+
+setUserPassword "Enter the MySQL userid with authority to upload the data: "
+
+# NOTE: "local" is probably irrelevant in the following MySQL load command:
+
+verbose Updating the MySQL database.  This may take a while...
+
+# The following command does not erase the table:
+
+echo "load data local infile '$TMP/expressionTable.txt' into table exprs;" |\
+  mysql -u "$user" -p"$password" "$DATABASE"
+

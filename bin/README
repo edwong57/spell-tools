@@ -1,0 +1,122 @@
+bin/README of 2011.01.14
+
+Note: The scripts in SPELL_HOME/bin are all self-documenting in the
+sense that they all accept -h (or equivalently --help) for help.
+
+Table of Contents
+=================
+Part 1: Generic Scripts
+Part 2: Scripts for Setting Up and Managing an Instance of SPELL
+Part 3: Merging directories of .pcl files
+Part 4: SPELL Utilities
+
+
+Part 1: Generic Scripts
+=======================
+coalesce  - coalesce consecutive matching records, 
+            e.g. A 1 ; A 2 ; A 3  --> A 1|2|3
+translate - given a dictionary, translate a column of a file; 
+            given a list of terms, select rows from a file
+
+
+Part 2: Scripts for Setting Up and Managing an Instance of SPELL
+================================================================
+
+See the SPELL Setup Manual for details.
+
+addExprs
+coalesce
+deleteExprs
+filename_to_PMID (formerly: FILENAME_PMID)
+filter_pcl
+getCitationInformationFromGEO
+generate_systematic_to_display_file
+getPMID
+spell_server
+updateObo
+
+
+Part 3: Merging directories of .pcl files
+=========================================
+
+The scripts "spell_prepare" and "spell_merge" support the updating and
+merging of directories of PCL files.  Typically this process is based
+on an updated version of SGD_features.tab, the file which specifies
+standard gene names and aliases.
+
+spell_prepare can be used interactively, thus allowing translation
+dictionaries and lists of valid gene names to be modified
+incrementally.
+
+
+Assumptions:
+
+a) .spellrc in ~ or else SPELL_HOME/bin is setup as usual, 
+   preferably with a definition of SPELL_TEMP_DATA.
+
+b) Each collection of .pcl files is in a separate directory.
+   One of these directories may also be the "target directory".
+   The .pcl files in the "target directory" will NOT be altered.
+   Transformed versions of the .pcl files in the other directories
+   will be copied into the "target directory".
+   
+c) Each of the directories with .pcl files also contains a locally
+   uptodate FILENAME_PMID file. This file may be given another
+   name except in the "target directory".
+
+
+Step 1:
+In each PCL directory, run the appropriate spell_prepare command.
+
+E.g.
+
+spell_prepare --verbose --quiet --exclude \
+  --prefix 2010. --untranslateable  --target ~/tmp/spell2010 --filter .
+
+This invocation will transform each FILE.pcl file in the pwd to
+~/tmp/spell2010/2010.FILE.pcl
+
+
+Step 2:
+Run spell_merge
+
+For details about the required options and arguments of this script, 
+run: spell_merge --help
+
+Here is an example:
+
+TARGET=$SPELL_HOME/spell2010
+spell_merge -v --target "$TARGET" --prefix 2010. \
+   expression_connection_data imperio/FILENAME_PMID.2011
+
+
+Part 4: SPELL Utilities
+=======================
+generate_auxiliary_dictionary
+generate_alias_to_standard_map
+pcl2genes
+spell_home
+translate_pcl_files
+
+
+INDEX
+=====
+
+addExprs
+coalesce
+deleteExprs
+filename_to_PMID
+filter_pcl
+generate_alias_to_standard_map
+generate_auxiliary_dictionary
+generate_systematic_to_display_file
+getCitationInformationFromGEO
+getPMID
+pcl2genes
+spell_home
+spell_merge
+spell_prepare
+spell_server
+translate
+translate_pcl_files
+updateObo

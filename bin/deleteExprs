@@ -1,0 +1,237 @@
+#!/bin/bash
+# peak@princeton.edu 2010.03.05
+
+# For help: $0 -h
+
+# If SPELL_HOME is not available in the environment,
+# an attempt to read it from .spellrc in the same directory as this script will be made.
+
+# This script is the obverse of addExprs.
+# For help: $0 --help
+
+ECHO=
+TMP=/tmp/deleteExprs.$$
+
+# For testing:
+# TMP=/tmp/deleteExprs
+# ECHO=echo
+# VERBOSE=1
+
+
+############################# AVOID CHANGES BELOW THIS LINE ########################
+
+### Global variables:
+BN=`basename "$0"`
+DN=`dirname "$0"`
+error=
+
+# Syntax: set_value KEY FILE
+# set $value to be the value of KEY in FILE if the file exists.
+# The file is assumed to specify KEY=VALUE but may have #-style comments.
+function set_value {
+  if [ -r "$2" ] ; then
+    value=`grep '^ *'"$1"' *=' "$2" | sed -e 's/^[^=]*= *\([^#]*\)/\1/'`
+  fi
+}
+
+if [ "$SPELL_HOME" = "" ] ; then
+  set_value SPELL_HOME "$DN/.spellrc"
+  SPELL_HOME="$value"
+fi
+
+# If $DN is a symbolic link then follow it back:
+if [ -z "$SPELL_HOME" -a -h "$0" ] ; then
+  DN=$(readlink "$0" 2> /dev/null)
+  DN=$(dirname "$DN")
+  set_value SPELL_HOME "$DN/.spellrc"
+  SPELL_HOME="$value"
+fi
+
+### Functions:
+
+function help {
+cat <<EOF
+
+Syntax: $BN [ OPTIONS ] FILE ....
+
+This script effectively hides the specified .pcl files from SPELL.
+Specifically, it removes those rows in the exprs and datasets tables that correspond to the
+specified .pcl files.
+
+Note: It may be advisable to stop SPELL before running this script.
+If this script is run concurrently with SearchServer, then after this script has completed,
+SearchServer should be restarted.
+
+PREREQUISITE:
+    The "information files" that are produced using the "Recreate Info Files" 
+    feature of the the web-based SPELL admin interface should be uptodate.
+
+Options:
+  -d DATABASE :: the MySQL database to be updated.
+  -q          :: query the database to determine if the expression data 
+                 has already been uploaded.
+  -v          :: verbose
+
+The SPELL home directory will be inferred from the environment variable SPELL_HOME
+if it is set. Otherwise, an attempt will be made to determine the value based on
+the .spellrc file in the directory in which this script exists will be made.
+
+Examples:
+
+ $BN -d yeast_spell_development GSE10066_*.pcl
+
+EOF
+}
+
+# Syntax: set_dsetID FILENAME
+# set $dsetID to be the dsetID corresponding to FILENAME
+function set_dsetID {
+    dsetID=`grep '	'"$1"'$' $DATASET_LIST | sed -e 's/	.*$//'`
+}
+
+
+function cleanup {
+  verbose $BN:removing all files in $TMP
+  rm $TMP/*
+  rmdir $TMP
+}
+
+function verbose {
+  if [ "$VERBOSE" ] ; then
+    echo "$@"
+  fi
+}
+
+# Set $user and $password
+# Syntax: setUserPassword PROMPT
+function setUserPassword {
+  local etc
+  if [ -z "$user" ] ; then
+    read -p "$1" user etc
+    if [ -z "$user" ] ; then exit ; fi
+  fi
+  if [ -z "$password" ] ; then
+    read -p "Enter the password for $user: " password etc
+  fi
+}
+
+
+# set dsetIDs
+function collect_dsetIDs {
+  local file
+  dsetIDs=
+  for file
+  do
+    set_dsetID "$file"
+    if [ -z "$dsetID" ] ; then
+       echo "$BN: dsetID of $file not found"
+       continue
+    else
+       dsetIDs="$dsetIDs $dsetID"
+    fi
+  done
+}
+
+# For each argument $id report information from the datasets and exprs tables
+#
+# An alternative would be to construct a query using 'in':
+# select dsetID, count(*) from exprs where dsetID in ( .... ) group by dsetID;
+#
+function query {
+  local SQL=$TMP/query.sql
+  local dsetID
+  # rm $SQL
+  for dsetID
+  do
+    echo "select id, pubmedID, filename from datasets where id = '$dsetID';" >> $SQL
+  done
+  echo "select 'From exprs table:';" >> $SQL
+  echo "select 'dsetID	count(*)';"  >> $SQL
+  for dsetID
+  do
+    echo "select dsetID, count(*) from exprs where dsetID = '$dsetID';" >> $SQL
+  done
+
+  verbose cat $SQL :: mysql -u "$user" -p"$password" "$DATABASE"
+  echo "id pubmedID filename"
+  cat $SQL | mysql --skip-column-names -u "$user" -p"$password" "$DATABASE"
+  $ECHO rm $SQL
+}
+
+# Syntax: deleteExprs FILE ....
+function deleteExprs {
+  local SQL=$TMP/query.sql
+  local file
+  # rm $SQL
+  for file
+  do
+    set_dsetID "$file"
+    verbose NOTE: dsetID for $file is $dsetID
+    echo "delete from datasets where id = '$dsetID';"  >> $SQL
+    echo "delete from exprs where dsetID = '$dsetID';" >> $SQL
+  done
+  cat $SQL | mysql -u "$user" -p"$password" "$DATABASE"
+}
+
+
+
+### Options:
+
+looking=1
+while [ $looking = 1 -a $# != 0 ]
+do case "$1" in
+      -h | --help )
+           help
+           exit
+           ;;
+      -d ) DATABASE="$2"
+           shift 2
+           ;;
+      -q ) QUERY=1
+           shift 1
+           ;;
+      -v ) VERBOSE=1
+           shift 1
+           ;;
+      -*  ) 
+           echo "$BN: unrecognized option: $1"
+           exit 1
+           ;;
+      *  )
+           looking=0
+           ;;
+  esac
+  
+done
+
+
+### Preliminary checks
+mkdir -p $TMP
+
+verbose "Note: SPELL_HOME=$SPELL_HOME"
+
+DATASET_LIST=$SPELL_HOME/spell_web/config/dataset_list.txt
+
+if [ ! -r "$DATASET_LIST" ] ; then
+  echo "$BN: $DATASET_LIST not found."
+  exit 1
+fi
+
+### Proceed:
+if [ $# = 0 ] ; then
+  exit
+fi
+
+if [ "$QUERY" = 1  ] ; then
+  setUserPassword "Enter the MySQL userid with authority to view the data: "
+  collect_dsetIDs $@
+  verbose dsetIDs=$dsetIDs
+  query $dsetIDs
+  $ECHO cleanup
+  exit
+fi
+
+setUserPassword "Enter the MySQL userid with authority to upload the data: "
+
+deleteExprs $@
+$ECHO cleanup

@@ -1,0 +1,151 @@
+#!/bin/sh
+# peak@princeton.edu 2010.02
+
+# Revisions: 
+# 2010.12.14: add options: -u -c +c
+
+# For help: $0 --help
+
+# Requires: 
+
+BN=`basename $0`
+DN=`dirname $0`
+
+function help {
+cat <<EOF
+Syntax: $BN [OPTIONS] [STRING]
+
+A filter that coalesces consecutive matching records from stdin,
+where matching is based on the string in the first column of each record.
+
+STRING specifies the coalescence character or string and defaults to "|".
+
+The column separator character for input and output defaults to the space character but
+may be specified with the -F option.
+
+For each grouped set of input records, the pair of strings V C is written to stdout as follows:
+ . consecutive records are grouped together based on the value in the first column
+ . for records within a group defined by a common value, V,
+   the values in the second column are strung together to form a string, C.
+
+Options:
+
+ -F s -- use s as the the column-separator character for input and output, except that
+         -F tab means: use the tab character as the column-separator character.
+
+ -u  :: only emit a particular value of C once within a group
+
+ -c  :: instead of coalescing, print the count
+ +c  :: add an additional column containing the count
+
+Example 1:
+$BN << end-of-file
+A 1
+A 2
+A 3
+B 4
+A 5
+end-of-file
+
+produces:
+
+A 1|2|3
+B 4
+A 5
+
+Example 2:
+$BN -u --count << end-of-file
+1 a
+1 b
+1 a
+2 a
+end-of-file
+
+produces
+
+1 2
+2 1
+
+EOF
+}
+
+F=-F" "
+OUT=" "
+COUNT=
+ADDCOUNT=
+
+while [ "$1" ]
+do case "$1" in
+      -h | --help ) help
+           exit
+           ;;
+      -u ) UNIQUE=1
+           shift
+           ;;
+      -F )
+           OUT="$2"
+           F="-F$2"
+           if [ "$2" = "tab" ] ; then
+              F=-F"	"
+             OUT="\t"
+           fi
+           shift 2
+           ;;
+      -c ) COUNT=1
+           shift
+           ;;
+      +c ) ADDCOUNT=1
+           shift
+           ;;
+      *  ) break
+           ;;
+  esac
+done
+
+X="|"
+if [ "$1" != "" ] ; then
+  X="$1"
+fi
+
+if [ -z "$UNIQUE" ] ; then
+  awk "$F" -v count="$COUNT" -v addcount="$ADDCOUNT" '
+     BEGIN { A=""; C=""; n=0 }
+     NF == 0 { n=0; next }
+     A == "" { n=1; A = $1; if (!count) {C=$2} ; next }
+     A == $1 { n++; if (!count) {C=C X $2}; next }
+     { if (addcount) { C = C OUT n }
+       print A OUT C ; 
+       A = $1;
+       n = 1;
+       if (!count) {C=$2}
+     }
+     END {
+       if (A != "") {
+         if (addcount) { C = C OUT n }
+         print A OUT C
+       }
+     } ' X="$X" OUT="$OUT"
+else
+  awk "$F" -v count="$COUNT" -v addcount="$ADDCOUNT" '
+     BEGIN { A=""; C=""; n=0 }
+     NF == 0 { delete memory; n=0; next }
+     A == "" { delete memory; n=1; A = $1; if (!count) {C=$2} ; memory[$2]=$2; next }
+     A == $1 {
+          if (memory[$2] != $2) { n++; if (!count) {C=C X $2} ; memory[$2]=$2 }
+          next 
+     }
+     { if (addcount) { C = C OUT n }
+       print A OUT C ; 
+       delete memory; 
+       A = $1;
+       n = 1;
+       if (!count) {C=$2}; 
+       memory[$2]=$2; 
+     }
+     END {
+       if (A != "") {
+         if (addcount) { C = C OUT n }
+         print A OUT C
+       }
+     } ' X="$X" OUT="$OUT"
+fi

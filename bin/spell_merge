@@ -1,0 +1,231 @@
+#!/bin/bash
+# peak@princeton.edu 12/2010
+# For help: $0 --help
+
+# Revisions: 
+
+# Requires: 
+#  . certain scripts in the $SPELL_HOME/bin directory
+
+# Constants:
+BN=`basename $0`
+DN=`dirname $0`
+TAB="	"
+
+function help {
+cat <<EOF
+Syntax: $BN [OPTIONS] SOURCE ...
+
+where SOURCE may either be a directory containing FILENAME_PMID or a pathname to a FILENAME_PMID file.
+
+Usage:
+
+This script should be run after the individual pcl directories have been processed, e.g.
+using the spell_prepare script.
+
+The --target and --prefix options are required.
+
+1. SYSTEMATIC_GENE_NAMES = legal_genes.txt +  extra_genes.txt
+2. Generate the ALIAS_MAPPING_FILE from ALIAS_TO_STANDARD
+3. SYSTEMATIC_TO_DISPLAY_FILE
+4  Merge FILENAME_PMID files
+
+Options:
+ --target TARGET : the target directory
+ --prefix PREFIX : the prefix to be added to the .pcl files
+EOF
+}
+
+function verbose {
+  if [ "$VERBOSE" ] ; then
+    echo "$1"
+  fi
+}
+
+function continuep {
+   local PROMPT="$1"
+   if [ -z "$1" ] ; then
+      PROMPT="Continue? [yN]"
+   fi
+   read -p "$PROMPT " x
+   case "$x" in
+     y | Y | yes | YES ) return
+     ;;
+   esac
+   exit
+}
+
+# Attempt to source .spellrc
+for dir in ~ "$DN"
+do
+  if [ -r "$dir/.spellrc" ] ; then 
+    . "$dir/.spellrc"
+    break
+  fi
+done
+
+while [ "$1" ]
+do case "$1" in
+      -h | --help ) help
+           exit
+           ;;
+      -q | --quiet )
+           QUIET=-q
+           shift
+           ;;
+      -v | --verbose ) 
+           VERBOSE=1
+           shift
+           ;;
+      --prefix ) PREFIX="$2"
+           shift 2
+           ;;
+      --target ) TARGET="$2"
+           shift 2
+           ;;
+      -* ) echo "$BN: illegal option: $1"
+           exit
+           ;;
+      * )  break
+           ;;
+  esac
+done
+
+if [ -z "$SPELL_DATA" -o ! -d "$SPELL_DATA" ] ; then
+  echo "$BN: SPELL_DATA must be set to a valid directory. This is normally done in .spellrc"
+  exit 1
+fi
+
+if [ -z "$SPELL_HOME" -o ! -d "$SPELL_HOME" ] ; then
+  echo "$BN: SPELL_HOME must be set to a valid directory. This is normally done in .spellrc"
+  exit 1
+fi
+
+if [ -z "$SPELL_TEMP_DATA" -o ! -d "$SPELL_TEMP_DATA" ] ; then
+  echo "$BN: SPELL_TEMP_DATA must be set to a valid directory. This may be done in .spellrc"
+  exit 1
+fi
+
+BIN="$SPELL_HOME/bin"
+THIS=`pwd`
+
+if [ "$VERBOSE" ] ; then
+cat <<EOF
+SPELL_HOME=$SPELL_HOME
+SPELL_DATA=$SPELL_DATA
+SPELL_TEMP_DATA=$SPELL_TEMP_DATA
+EOF
+fi
+
+
+# check that the directory or file exists
+function check {
+  local DIR="$1"
+  local f 
+  local error=0
+  for f in FILENAME_PMID
+  do
+    if [ -d "$DIR" ] ; then
+      verbose "$BN: $DIR is a directory"
+      if [ ! -r "$DIR/$f" ] ; then
+        echo "$BN: $DIR/$f not found"
+        error=$(( error + 1 ))
+      fi
+    elif [ -f "$DIR" -a  -r "$DIR" ] ; then
+      verbose "$BN: $DIR is a regular file"
+    else
+      echo "$BN: $DIR not found"
+      error=$((error + 1 ))
+    fi
+  done
+  if [ $error != 0 ] ; then
+    echo "$BN: $error error(s) so exiting"
+    exit 1
+  fi
+}
+
+function generate_SYSTEMATIC_GENE_NAMES {
+  local STD="$SPELL_TEMP_DATA"
+  local LEGAL="$STD/legal_genes.txt"
+  local EXTRA=
+  if [  -r "$EXTRA" ] ; then
+    EXTRA="$STD/extra_genes.txt"
+  fi
+  sort -u "$LEGAL" "$EXTRA" > $STD/SYSTEMATIC_GENE_NAMES
+}
+
+# global: everything except the counters
+function update_FILENAME_PMID {
+  local NSTART NEND DUPS
+  if [ -z "$PREFIX" ] ; then
+    echo "$BN: no PREFIX specified."
+    exit 1
+  fi
+
+  NSTART=0
+  if [ -z "$TARGET" ] ; then
+    echo "$BN: no target directory specified."
+    exit 1
+  elif [ -r "$TARGET/FILENAME_PMID" ] ; then
+    echo "$BN: $TARGET/FILENAME_PMID already exists"
+    continuep "If you continue, it will be modified. Continue? [yN]"
+    NSTART=`cat $TARGET/FILENAME_PMID | wc -l`
+  fi
+
+  for d
+  do
+    verbose "checking $d"
+    check "$d"
+  done
+
+  for d
+  do
+    if [ -d "$d" ] ; then file="$d/FILENAME_PMID" ; else file="$d" ; fi
+    verbose "$BN: processing $file"
+    sed -e 's/^/'"$PREFIX"'/' "$file" >> "$TARGET/FILENAME_PMID"
+  done
+
+  NEND=`cat "$TARGET/FILENAME_PMID" | wc -l`
+
+  if [ $NEND = 0 -o $NSTART = $NEND ] ; then
+    echo "$BN: $TARGET/FILENAME_PMID unchanged"
+  else
+    DUPS=`cut -f 1 < "$TARGET/FILENAME_PMID" | sort | uniq -d | wc -l`
+    if [ $DUPS != 0 ] ; then
+      echo "$BN: warning: $TARGET/FILENAME_PMID contains $DUPS duplicate filename references"
+    fi
+  fi
+}
+
+function generate_ALIAS_MAPPING_FILE {
+  local STD="$SPELL_TEMP_DATA"
+  local TMP=/tmp/spell_merge.1
+
+  local LEGAL="$STD/legal_genes.txt"
+  local EXTRA="$STD/extra_genes.txt"
+
+  local ALLOW="$TMP.temp_genes.txt"
+
+  if [ ! -r $EXTRA ] ; then EXTRA="" ; fi
+
+  if [ ! -r "$STD/ALIAS_TO_STANDARD" ] ; then
+    echo "$BN: cannot find $STD/ALIAS_TO_STANDARD"
+    exit 1
+  fi
+
+  cat $LEGAL $EXTRA | sort -u | awk '-F\t' '{print $1 FS $1}' > $ALLOW
+
+  sort -u "$STD/ALIAS_TO_STANDARD" $ALLOW | sort -t "$TAB" -k1,1 -k2,2 |\
+    coalesce -F tab > "$STD/ALIAS_MAPPING_FILE"
+
+  echo Please rm $ALLOW
+}
+
+update_FILENAME_PMID $*
+
+verbose generate_ALIAS_MAPPING_FILE
+generate_ALIAS_MAPPING_FILE
+
+generate_SYSTEMATIC_GENE_NAMES
+
+generate_systematic_to_display_file -v --exclude --temp "$SPELL_TEMP_DATA"
