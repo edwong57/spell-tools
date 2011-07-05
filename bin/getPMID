@@ -1,0 +1,187 @@
+#!/bin/sh
+# peak@princeton.edu 2010.02.12, 2010.10.8
+
+TMP=/tmp/GEO
+
+BN=`basename $0`
+if [ "$1" = -h -o "$1" = --help ] ; then
+  cat <<EOF
+Syntax: $BN [ options ]
+
+Stdin: list of GEO accession numbers, one per line
+Stdout: for each GEO value, a single row of the form GEO PMID is written to stdout, where:
+
+GEO is the first blank-delimited token read on stdin;
+PMID is 0 if no corresponding Pubmed ID is found;
+PMID is the Pubmed ID if a unique value is found for the given GEO or for its immediate superseries;
+PMID is the maximum of the PMIDs if the GEO has more than one PMID value, otherwise.
+
+This script uses information contained in files obtained from NBIH.
+These files can be retained and/or reused by specifying the '-r' option.
+In addition, if this script cannot find a PMID in the NBIH file, that file is always retained so that
+it can be checked.
+If a PMID value is not found, then the retrieved file or files are retained in $TMP, 
+and GEO is appended to $TMP/GEO.err
+
+
+Options:
+ -a -- append the 'GEO PMID' output to GEO_PMID instead of sending to stdout.
+ -r -- reuse any relevant files in $TMP if found, and retain any fetched files.
+ -s -- skip the check for superseries.
+ -v -- verbose
+
+NOTE: If a line in stdin begins with # then that line will be ignored.
+WARNING: The accuracy of the results is highly dependent on the details of the NCBI response.
+
+Examples:
+
+echo GSE12004 | $BN  # found
+echo GSE2412  | $BN  # not found
+echo GSE11651 | $BN  # multiple PMIDs
+echo GSE10948 | $BN  # superseries
+EOF
+  exit
+fi
+
+APPEND=
+REUSE=
+SKIP=
+VERBOSE=
+looking=1
+while [ $looking = 1 -a $# != 0 ]
+do case "$1" in
+      -a ) APPEND=1
+           shift
+           ;;
+      -r ) REUSE=1
+           shift
+           ;;
+      -s ) SKIP=1
+           shift
+           ;;
+      -v ) VERBOSE=1
+           shift
+           ;;
+      *  ) looking=0
+           ;;
+  esac
+done
+
+mkdir -p $TMP
+
+### FUNCTIONS ###
+
+# PMID should set PMID to "" or one or more Pubmed ids
+# GEOEXISTS is also set.
+function PMID {
+  PMID=
+  GEOEXISTS=
+  local GEO="$1"
+  if [ -r "$TMP/$GEO" ] ; then GEOEXISTS=1 ; fi
+  if [ ! "$REUSE" -o ! "$GEOEXISTS"  ] ; then
+    wget -q -O "$TMP/$GEO" "http://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?targ=self&form=text&view=brief&acc=$GEO"
+    # HTML: "http://www.ncbi.nlm.nih.gov/projects/geo/query/acc.cgi?acc=$GEO"
+    rc $? "wget $GEO"
+    if [ $rc != 0 ] ; then
+	verbose "removing $TMP/$GEO"
+        rm "$TMP/$GEO"
+	return
+    fi
+  fi
+  # Be sure to strip off ^M
+  PMID=`grep '^!Series_pubmed_id' $TMP/$GEO | sed 's/.*= *\([0-9,]*\) */\1/' | tr -d '\r'`
+}
+
+# Search all the immediate superseries if any for the maximal PMID
+function superseries {
+  superseries=
+  if [ "$SKIP" ] ; then return ; fi
+  local GEO="$1"
+  local FOUND=
+  local EXISTS=
+  if [ -r "$TMP/$GEO.html" ] ; then EXISTS=1 ; fi
+   # gds/?term=$GEO"
+  if [ ! "$REUSE" -o ! "$EXISTS"  ] ; then
+    wget -q -O "$TMP/$GEO.html" "http://www.ncbi.nlm.nih.gov/projects/geo/query/acc.cgi?acc=$GEO"
+    rc $? "wget $GEO.html"
+    if [ $rc != 0 ] ; then
+      verbose "removing $TMP/$GEO.html"
+      rm "$TMP/$GEO.html"
+      return 
+    fi
+  fi
+  ANS=`awk '/This SubSeries is part of SuperSeries/, /^<\/table>/' $TMP/$GEO.html |\
+       sed -n 's,^<tr.*>\([A-Z]*[0-9]*\)</a></td>,\1,p'`
+  if [ ! "$EXISTS" -a ! "$REUSE" ] ; then rm "$TMP/$GEO.html" ; fi
+  if [ -z $ANS ] ; then
+      return
+  fi
+  verbose "examining superseries: $ANS"
+  for x in $ANS
+  do
+    PMID $x
+    if [ -z "$PMID" ] ; then
+      continue
+    fi
+    for p in $PMID
+      do         
+      if [ -z "$FOUND" ] ; then
+        FOUND=$p
+      elif [ $p -gt $FOUND ] ; then
+        FOUND=$p
+      fi
+    done
+  done 
+  verbose "PMID of superseries is $FOUND"
+  superseries=$FOUND
+}
+
+function say {
+  if [ "$APPEND" ] ; then
+       echo "$@" >> GEO_PMID
+   else
+       echo "$@"
+   fi
+}
+
+function verbose {
+  if [ "$VERBOSE" ] ; then
+    echo "$@"
+  fi
+}
+
+# Syntax: rc $? msg
+# Set rc and write msg to stderr
+function rc {
+  rc=$1
+  if [ "$rc" = 0 ] ; then return ; fi
+  shift
+  echo "$BN: $@ rc=$rc" >&2
+}
+
+##########################
+
+while read -r GEO etc ; do
+  case "$GEO" in
+   "" | \#* ) continue ;;
+  esac
+  PMID $GEO
+  ANS=$PMID
+  if [ "$ANS" = "" ] ; then 
+    superseries $GEO
+    ANS=$superseries
+  fi
+
+  if [ "$ANS" = "" ] ; then 
+    echo $GEO  >> $TMP/GEO.err
+    say "$GEO" 0
+    continue
+  else
+    if [ ! "$GEOEXISTS" -a ! "$REUSE" ] ; then rm "$TMP/$GEO" ; fi
+  fi
+
+  # Select the largest:
+  ANS=`echo "$ANS" | sort -rn | head -1`
+  say "$GEO $ANS"
+done
+

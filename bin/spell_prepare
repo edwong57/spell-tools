@@ -1,0 +1,566 @@
+#!/bin/bash
+# peak@princeton.edu 12/2010
+# For help: $0 --help
+
+# Revisions: 
+# 01/2011: added --extra
+#        : exclude 'not physically mapped' entries
+
+# Requires: 
+#  . certain scripts in the $SPELL_HOME/bin directory
+
+# Constants:
+BN=`basename $0`
+DN=`dirname $0`
+
+FEATURES=SGD_features.tab
+DOWNLOAD_FEATURES=http://downloads.yeastgenome.org/chromosomal_feature/$FEATURES
+ALLOW=temp_genes.txt
+EXTRA=extra_genes.txt
+
+# Variables:
+LEGAL=legal_genes.txt
+EXTRA_PATH=
+PREFIX=
+
+# For testing:
+# PCLFILES=arsenic_time_dose.pcl
+
+function help {
+cat <<EOF
+Syntax: $BN [OPTIONS] PCL_DIRECTORY ...
+
+This script normalizes the gene names in the .pcl files in each
+PCL_DIRECTORY, and optionally filters out rows with unwanted gene
+names. Normalization is achieved by translating aliases to allowed
+gene names.
+
+Specifically, each .pcl file, FILE.pcl, is translated to
+translated.FILE.pcl or, if the --filter option is specified, to
+filtered_translated.FILE.pcl
+
+Normalization is usually based on the aliases and legal names defined
+in SPELL_DATA/$FEATURES, but additional names may be declared as being
+legal, and additional aliases may be specified.
+
+This script does not require any data files other than the .pcl files,
+but if certain files exist on entry, they will be used as described 
+in the "ADDITIONAL FILES" section below.
+
+This script assumes the environment variables SPELL_HOME and
+SPELL_DATA are set in ~/.spellrc or else $DN/.spellrc; if not, then
+they should be set prior to invoking the script.
+
+In the following, STD ("SPELL temporary data") is a directory for
+files that are not required by the SPELL server. The value of STD is
+determined as follows:
+
+   if  the "--temp" option is given, then the specified value is used; 
+   otherwise, if SPELL_TEMP_DATA is defined in ~/.spellrc or else $DN/.spellrc,
+   then that value is used; 
+   otherwise, if the environment variable SPELL_TEMP_DATA is set, 
+   then that value is used; 
+   otherwise STD is set to the pwd at invocation of this script.
+
+ADDITIONAL FILES
+
+1. SPELL_DATA/$FEATURES
+
+If this file is not found on entry, an attempt to download it from
+$DOWNLOAD_FEATURES will be made.
+
+2. STD/$LEGAL
+
+If the file STD/$LEGAL exists on entry, it is assumed to define the
+"legal genes"; otherwise, it is generated based on
+SPELL_DATA/$FEATURES.
+
+3. STD/$EXTRA 
+
+If this file exists, it is assumed to contain a list of additional
+gene names that are to be regarded as legal.
+
+4. PCL_DIRECTORY/auxiliary.dict
+
+If this file already exists, it should be valid (see below) and will
+be augmented unless you specify otherwise interactively.
+
+
+Options:
+  -h | --help     : help
+  -q | --quiet    : do not print details about missing genes
+ --augment        : if PCL_DIRECTORY/auxiliary.dict exists, then augment it without prompting the user
+ --exclude        : exclude 'not physically mapped' entries from $FEATURES
+ --extra PATHNAME : pathname of file listing genes that are also to be regarded as legal
+ --filter         : after performing normalization, filter the PCL files based on the listings of legal and extra genes
+ --refresh        : except for auxiliary.dict, regenerate all files without prompting; 
+                    this option however will not force redownloading $FEATURES if it already exists.
+ --temp STD       : provide the directory name to be used for temporary data as described above
+ --untranslateable : generate a list of untranslateable gene names
+ --verbose        : print informative remarks
+
+
+auxiliary.dict
+--------------
+
+This script will create or augment the file PCL_DIRECTORY/auxiliary.dict, 
+an auxiliary dictionary which guides the translation of gene symbols in PCL files.  
+
+Each generated line in the dictionary has two tab-separated values: ALIAS SYMBOL
+
+where ALIAS is to be translated to SYMBOL.
+
+You may add entries to PCL_DIRECTORY/auxiliary.dict following this scheme.
+
+
+Notes:
+ . If the file ~/.spellrc or else $DN/.spellrc exists, then it is sourced.
+ . The pwd and each PCL_DIRECTORY must be writable.
+ . PCL files prefixed with "translated." or "filtered_translated." are not processed.
+ . The following generated files are placed in each PCL_DIRECTORY for checking and/or subsequent processing:
+    auxiliary.dict
+    untranslateable_genes
+    illegal_genes       -- the names that are neither legal nor deemed to be legal
+    illegal_genes.names -- the names in illegal_genes that cannot be translated
+    illegal_genes.stderr
+
+EOF
+}
+
+function verbose {
+  if [ "$VERBOSE" ] ; then
+    echo "$1"
+  fi
+}
+
+function continuep {
+   local PROMPT="$1"
+   if [ -z "$1" ] ; then
+      PROMPT="Continue? [yN]"
+   fi
+   read -p "$PROMPT " x
+   case "$x" in
+     y | Y | yes | YES ) return
+     ;;
+   esac
+   exit
+}
+
+# Attempt to source .spellrc
+for dir in ~ "$DN"
+do
+  if [ -r "$dir/.spellrc" ] ; then 
+    . "$dir/.spellrc"
+    break
+  fi
+done
+
+while [ "$1" ]
+do case "$1" in
+      -h | --help ) help
+           exit
+           ;;
+      -q | --quiet )
+           QUIET=-q
+           shift
+           ;;
+      -v | --verbose ) 
+           VERBOSE=1
+           shift
+           ;;
+      --augment ) 
+           AUGMENT=1
+           shift
+           ;;
+      --exclude ) EXCLUDE="--exclude"
+           shift
+           ;;
+      --extra ) 
+           if [ -r "$2" ] ; then
+             EXTRA_PATH="$2"
+           else
+             echo "$BN: WARNING: the --extra option will be ignored as the specified file $2 does not exist"
+           fi
+           shift 2
+           ;;
+      --filter ) FILTER=1
+           shift
+           ;;
+      --prefix )
+           # Primarily for testing:
+           PREFIX="$2"
+           shift 2
+           ;;
+      --refresh ) REFRESH=1
+           shift
+           ;;
+      --temp | --spell_temp_data ) SPELL_TEMP_DATA="$2"
+           shift 2
+           ;;
+      --untranslateable ) UNTRANSLATEABLE=1
+           shift
+           ;;
+      --target ) TARGET="$2"
+           if [ -d "$TARGET" ] ; then
+             # Ensure TARGET is absolute
+             TARGET=`(cd "$TARGET" ; pwd )`
+           else
+             echo "$BN: target directory does not exist"
+             exit 1
+           fi
+           shift 2
+           ;;
+      -* ) echo "$BN - unrecognized option: $1"
+           exit 1
+           ;;
+      *  ) break
+           ;;
+  esac
+done
+
+
+if [ -z "$SPELL_DATA" -o ! -d "$SPELL_DATA" ] ; then
+  echo $BN: SPELL_DATA must be set to a valid directory. This is normally done in .spellrc 
+  exit 1
+fi
+
+if [ -z "$SPELL_HOME" -o ! -d "$SPELL_HOME" ] ; then
+  echo $BN: SPELL_HOME must be set to a valid directory. This is normally done in .spellrc 
+  exit 1
+fi
+
+BIN="$SPELL_HOME/bin"
+THIS=`pwd`
+
+if [ -z "$SPELL_TEMP_DATA" ] ; then
+  STD="$THIS"
+elif [ ! -d "$SPELL_TEMP_DATA" ] ; then
+  echo "$BN: SPELL_TEMP_DATA=$SPELL_TEMP_DATA does not exist."
+  exit 1
+else 
+  STD="$SPELL_TEMP_DATA"
+fi
+
+if [ "$VERBOSE" ] ; then
+cat <<EOF
+SPELL_HOME=$SPELL_HOME
+SPELL_DATA=$SPELL_DATA
+SPELL_TEMP_DATA=$SPELL_TEMP_DATA
+EOF
+fi
+
+####################################### FUNCTIONS #############################
+# Function to ensure $FEATURES is available:
+function ensure_features {
+  if [ -r "$SPELL_DATA/$FEATURES" ] ; then
+       verbose "$BN: using existing $SPELL_DATA/$FEATURES"
+  else
+    wget -O "$SPELL_DATA/$FEATURES" "$DOWLOAD_FEATURES"
+    rc=$?
+    if [ ! -r "$SPELL_DATA/$FEATURES" ] ; then
+      echo "$BN: unable to wget $FEATURES"
+      exit $rc
+    fi
+  fi
+}
+
+# Function to ensure the file ALIAS_TO_STANDARD is available in $STD:
+function ensure_ALIAS_TO_STANDARD {
+  if [ -z "$REFRESH" -a -r "$STD/ALIAS_TO_STANDARD" ] ; then
+    verbose "$BN: using existing $STD/ALIAS_TO_STANDARD"
+  else
+    $BIN/generate_alias_to_standard_map $EXCLUDE -i $SPELL_DATA/$FEATURES > "$STD/ALIAS_TO_STANDARD"
+  fi
+}
+
+# Function to ensure generic data is available
+# Global: EXCLUDE FEATURES LEGAL SPELL_DATA STD 
+function ensure_legal_genes {
+  local IN
+  if [ -z "$REFRESH" -a -r "$STD/$LEGAL" ] ; then
+    verbose "$BN: using existing $STD/$LEGAL"
+  else
+    ensure_features
+
+    if [ "$EXCLUDE" ] ; then
+      IN="$STD/$LEGAL.tmp"
+      awk '-F\t' '$2 == "not physically mapped" { next }
+         {print}' "$SPELL_DATA/$FEATURES" > "$IN"
+    else
+      IN="$SPELL_DATA/$FEATURES"
+    fi
+
+    # One way to remove the blank: "tail -n +2"
+    cut -f 4 < "$IN" | sort -u | tail -n +2 > "$STD/$LEGAL"
+    if [ "$IN" = "$STD/$LEGAL.tmp" ] ; then /bin/rm "$IN" ; fi 
+
+  fi
+}
+
+function check_directory {
+  if [ ! -d "$1" ] ; then
+    echo "$BN: directory $1 not found"
+    exit 1
+  fi
+}
+
+# If $EXTRA_PATH exists and is non-empty, then set LEGAL to a temporary file
+# Global: EXTRA_PATH ALLOW LEGAL STD BN
+function allow_extra_genes {
+  local N
+  if [ -r "$EXTRA_PATH" ] ; then
+    N=`cat "$EXTRA_PATH" | wc -l`
+    if [ $N -gt 0 ] ; then
+      verbose "$BN: reading $N gene names in $EXTRA_PATH"
+      cat "$STD/$LEGAL" "$EXTRA_PATH" | sort -u > "$STD/$ALLOW"
+      LEGAL="$ALLOW"
+      return
+    fi
+  fi
+  verbose "$BN: EXTRA_PATH=$EXTRA_PATH does not exist or is empty and will be ignored."
+  EXTRA_PATH=
+}
+
+# Should we add to an existing dictionary?
+# global AUGMENT, BN, PCL_DIRECTORY
+function maybe_add_to_auxiliary_dictionary {
+  local AUX="$1"
+  local x
+  if [ -r "$AUX.tmp" ] ; then /bin/rm "$AUX.tmp" ; fi  
+  if [ -r "$AUX" ] ; then
+     if [ "$AUGMENT" ] ; then
+        x=a
+        verbose "$BN: augmenting existing $AUX in $PCL_DIRECTORY"
+     else
+        echo "$BN: The auxiliary dictionary $PCL_DIRECTORY/$AUX already exists."
+        echo "You may choose to move it to $AUX.bak before proceeding, or to allow this script to augment it."
+        read -p "Enter m to move it; a to allow this script to augment it; or anything else to exit: " x
+     fi
+     case "$x" in
+       m ) /bin/mv "$AUX" "$AUX.bak"
+         ;;
+       a ) /bin/cp -p "$AUX" "$AUX.tmp"
+         ;;
+       * ) echo "$BN: exiting at your service."
+         exit
+         ;;
+     esac
+  fi
+}
+
+# Syntax: verify_filtered_correctness FILE
+#   where filtered_FILE already exists
+# global: BIN STD LEGAL QUIET
+function verify_filtered_correctness {
+  # echo pwd is `pwd`
+  local file="$1"
+  # verbose "Generating filtered.$file.check ..."
+  # should get same result with --best --fold 
+    cat "$file" | $BIN/translate --headers 2 --dict "$STD/$LEGAL" --from 1 --to 1 --omit $QUIET --best --fold > "filtered.$file.check"
+
+  # echo filtered.$file.check2
+  # cat $file | $BIN/translate --headers 2 --dict "$STD/$LEGAL" --from 1 --to 1 --omit $QUIET --warn        > "filtered.$file.check2"
+
+  cmp -s "filtered_$file" "filtered.$file.check"
+  if [ $? = 0 ] ; then 
+    verbose "$BN: passed internal check for filtered_$file"
+    /bin/rm "$file" "filtered.$file.check"
+  else
+    echo "$BN: INTERNAL ERROR: filtered_$file and filtered.$file.check differ."
+    echo "$BN: See $file for the translated version."
+  fi
+}
+
+# Produce a list of untranslateable genes
+# global: just about everything 
+function untranslateable_genes {
+     local N file rc
+     if [ -r ${PREFIX}untranslateable_genes ] ; then rm ${PREFIX}untranslateable_genes ; fi
+
+     # Method 1:
+     cat "$AUX" | cut -f 1 | sort -u | comm -23 "$ILLEGAL.names" - > ${PREFIX}untranslateable_genes.method1
+
+     # Method 2:
+     # compare: translate_pcl_files --dict "$AUX" --untranslateable $PCLFILES
+     for file in $PCLFILES
+     do
+       cat $file | $DN/translate --dict "$AUX" --fold --untranslateable --headers 2 |\
+         sort -u | comm -23 - "$STD/$LEGAL" >> ${PREFIX}untranslateable_genes
+     done
+     sort -u -o ${PREFIX}untranslateable_genes ${PREFIX}untranslateable_genes
+
+     # The two methods should produce the same result.
+     cmp -s ${PREFIX}untranslateable_genes ${PREFIX}untranslateable_genes.method1
+     rc=$? 
+     if [ $rc = 0 ] ; then
+       verbose "$BN: The two methods for listing the untranslateable genes agree."
+       rm ${PREFIX}untranslateable_genes.method1
+     else 
+       cat <<EOF
+WARNING: The two listings of untranslateable genes should agree but do not:
+
+  ${PREFIX}untranslateable_genes was generated based on $STD/$LEGAL
+  ${PREFIX}untranslateable_genes.method1 was generated based on the auxiliary dictionary.
+
+EOF
+     fi
+
+     N=`cat ${PREFIX}untranslateable_genes | wc -l`
+     if [ "$N" -gt 0 ] ; then
+       # ASSERT untranslateable genes are not in the auxiliary dictionary
+       N=`(cat ${PREFIX}untranslateable_genes ; cat $AUX | cut -f 1 |  sort -u) | uniq -d | tee ${PREFIX}untranslateable.error | wc -l`
+       if [ "$N" -gt 0 ] ; then
+         echo "$BN: INTERNAL ERROR: some genes in the auxiliary.dict have also been flagged as untranslateable - see ${PREFIX}untranslateable.error"
+         exit 1
+       else
+         verbose "$BN: note: the list of untranslateable genes is consistent with the auxiliary dictionary"
+         /bin/rm ${PREFIX}untranslateable.error
+       fi
+     cat << EOF
+A list of untranslateable genes has been generated in the file:
+  $PCL_DIRECTORY/${PREFIX}untranslateable_genes
+
+You may wish to review this file before proceeding, 
+e.g. with a view to creating or updating the list of gene names in the file $STD/$EXTRA
+and/or modifying the auxiliary dictionary:
+  $PCL_DIRECTORY/$AUX
+
+NOTE: The auxiliary dictionary should only map aliases to names that are or are to be regarded as legal.
+That is, the following command should produce no lines:
+
+cat AUX | cut -f 2 | sort -u | comm -23 - LEGAL | comm -23 EXTRA
+
+where:
+  AUX is the auxiliary dictionary;
+  LEGAL is the list of legal genes;
+  EXTRA is the list of additional genes that are to be regarded as legal.
+
+EOF
+
+fi
+}
+
+# Syntax: postprocess FILEPREFIX FILENAME
+# This is a no-op if PREFIX and TARGET are both null.
+# Otherwise either
+# mv -i FILENAME ${TARGET}/${PREFIX}suffix
+# or mv -i FILENAME ${PREFIX}suffix
+# where suffix is the part of FILENAME after FILEPREFIX
+# Global: PREFIX TARGET
+function postprocess {
+  if [ -z "$TARGET" -a -z "$PREFIX" ] ; then return ; fi
+  local fileprefix="$1"
+  local filename="$2"
+  local dir="$TARGET"
+  local suffix
+
+  suffix=`echo "$filename" | sed 's/^'"$fileprefix"'//'`
+  if [ ! -z "$dir" ] ; then
+     dir="${TARGET}/"
+  fi
+  /bin/mv -i "$filename" "${dir}${PREFIX}$suffix"
+}
+
+###############################################################################
+
+if [ -z "$EXTRA_PATH" ] ; then EXTRA_PATH="$STD/$EXTRA" ; fi
+
+ensure_features
+ensure_legal_genes
+ensure_ALIAS_TO_STANDARD
+allow_extra_genes
+
+# Main function
+# Warning - cd
+# global: BIN BN EXTRA_PATH PREFIX SPELL_HOME STD QUIET
+function spell_prepare {
+  local PCL_DIRECTORY="$1"
+  local ILLEGAL="${PREFIX}illegal_genes"
+  local PCL2GENES_OUT="${PREFIX}pcl2genes.out"
+  local AUX="${PREFIX}auxiliary.dict"
+  local x N NAUX NILLEGAL PCLFILES
+
+  check_directory "$PCL_DIRECTORY"
+  cd "$PCL_DIRECTORY"
+
+  PCLFILES=`ls *.pcl | grep -v '^filtered_translated\.' | grep -v '^translated\.' `
+  if [ -z "$PCLFILES" ] ; then
+    echo "$BN: no relevant .pcl files found"
+    exit 1
+  fi
+
+  if [ -z "$REFRESH" -a -r "$PCL2GENES_OUT" ] ; then
+    verbose "$BN: using existing $PCL2GENES_OUT"
+  else
+    verbose "$BN: $BIN/pcl2genes TO $PCL2GENES_OUT"
+    $BIN/pcl2genes $PCLFILES > $PCL2GENES_OUT
+  fi
+
+  maybe_add_to_auxiliary_dictionary "$AUX"
+
+  # The following also generates $ILLEGAL.names
+  $BIN/generate_auxiliary_dictionary -i $PCL2GENES_OUT --aliases "$STD/ALIAS_TO_STANDARD" --legal "$STD/$LEGAL" --illegal "$ILLEGAL" --dict "$AUX"
+
+  if [ -r "$AUX.tmp" ] ; then
+    sort -u -o "$AUX" "$AUX" "$AUX.tmp"
+    /bin/rm $AUX.tmp
+  fi
+
+  NILLEGAL=`cat "$ILLEGAL.names" | wc -l`
+  NAUX=`cat "$AUX" | wc -l`
+  if [ $NAUX = 0 ] ; then
+    if [ -z "$FILTER" ] ; then 
+      NILLEGAL=0
+    else
+      NILLEGAL=`cat "$ILLEGAL.names" | wc -l`
+    fi
+    if [ $NILLEGAL = 0 ] ; then
+      continuep "The auxiliary dictionary is empty and there are no illegal gene symbols.  Do you wish to continue?"
+    fi
+  fi
+
+  # fgrep -v EMPTY $ILLEGAL.genes | grep -v '^Q' | grep -v DELTA | grep -v SIGMA | tr a-z A-Z | sort -u > $ILLEGAL.genes.selected
+
+  # Generate translated.$file
+  $BIN/translate_pcl_files --dict "$AUX" $PCLFILES
+
+  if [ "$UNTRANSLATEABLE" ] ; then
+     untranslateable_genes
+     if [ "$FILTER" -o "$TARGET" ] ; then
+       continuep "Do you wish to proceed immediately?"
+     fi
+  fi
+
+  if [ "$FILTER" ] ; then
+    # generate filtered_$file
+    # echo  $BIN/filter_pcl -f "$STD/$LEGAL" translated.*.pcl
+    $BIN/filter_pcl -f "$STD/$LEGAL" translated.*.pcl
+
+    # cat ${PREFIX}auxiliary.dict >> $SPELL_GENES
+    # sort -u -o $SPELL_GENES $SPELL_GENES
+
+    for file in translated.*.pcl
+    do
+      # Verify correctness of the filtered file
+      verify_filtered_correctness "$file"
+      postprocess filtered_translated. "filtered_$file"
+    done
+  elif [ ! -z "$TARGET" -o ! -z "$PREFIX" ] ; then
+    for file in translated.*.pcl
+    do
+      postprocess translated. "$file"
+    done  
+  fi # END OF FILTER
+}  # END OF function spell_prepare
+
+# SPELL_GENES=$STD/spell_genes.txt
+# cat "$STD/$LEGAL" > $SPELL_GENES
+
+for PCL_DIRECTORY
+do
+  ( spell_prepare "$PCL_DIRECTORY" )
+done
+
+if [ "$LEGAL" = "$ALLOW" -a -r "$STD/$ALLOW" ] ; then
+   /bin/rm "$STD/$ALLOW"
+fi

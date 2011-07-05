@@ -1,0 +1,116 @@
+#!/bin/bash
+# peak@princeton.edu
+# For help: $0 --help
+
+# Requires: translate
+
+BN=`basename $0`
+DN=`dirname $0`
+
+TAB="	"
+
+# Defaults:
+IN=pcl2genes.out
+ALIASES=ALIAS_TO_STANDARD
+LEGAL=legal_genes.txt
+AUX=auxiliary.dict
+ILLEGAL=illegal_genes
+
+function help {
+cat <<EOF
+Syntax: $BN [OPTIONS]
+
+Construct a dictionary for the "illegal names" that can be mapped to "legal" names.
+
+Inputs:
+  INPUT   : see -i option
+  ALIASES : see --aliases option
+  LEGAL   : see --legal option  
+
+Output:
+  The primary output is a TSV file containing a dictionary mapping illegal to legal names.
+  See also the --illegal and --untranslateable options.
+
+Options:
+ -i INPUT           : name of input file containing the "illegal" names (default: $IN)
+ --aliases ALIASES  : name of TSV file mapping alias to standard (default: $ALIASES)
+ --legal LEGAL      : name of file containing a list of "legal names" (default: $LEGAL)
+
+ --dict FILENAME    : name of file for holding the dictionary (default: $AUX)
+
+ --illegal NAME     : the name to be used for the generated files (default: $ILLEGAL)
+                      NAME (the "illegal" names)
+                      NAME.names (the names that cannot be translated)
+                      NAME.untranslateable (see "--untranslateable")
+ --untranslateable  : also produce a file (named NAME.untranslateable) containing names
+                      that cannot be translated even on the assumption that case can always be ignored.
+
+EOF
+}
+
+while [ "$1" ]
+do case "$1" in
+      -h | --help ) help
+           exit
+           ;;
+      -i | --in ) IN="$2"
+           shift 2
+           ;;
+
+       --untranslateable ) 
+           UNTRANSLATEABLE=1
+           shift
+           ;;
+       --aliases ) 
+           ALIASES="$2"
+           shift 2
+           ;;
+       --dict ) 
+           AUX="$2"
+           shift 2
+           ;;
+       --legal ) 
+           LEGAL="$2"
+           shift 2
+           ;;
+       --illegal ) 
+           ILLEGAL="$2"
+           shift 2
+           ;;
+       -* )
+           echo $BN: unrecognized option: "$1"
+           exit 1
+           ;;
+      *  ) break
+           ;;
+  esac
+done
+
+# Preliminary checks:
+sort -c $LEGAL
+rc=$?
+if [ $rc != 0 ] ; then
+  echo $BN: the file of legal names should be sorted
+  exit 1
+fi
+
+# Find "illegal" names in $IN
+comm -23 $IN $LEGAL | sort -u > $ILLEGAL
+
+# Step 2: Which of these can be handled?
+
+# echo $DN/translate --dict $ALIASES --warn --best --fold --omit --column 2 ERROR2 $ILLEGAL.stderr
+
+cat $ILLEGAL | awk "-F\t" '{print $1 FS $1}' |\
+  $DN/translate --dict $ALIASES --warn --best --fold --omit --column 2 2> $ILLEGAL.stderr | sort -u > $AUX 
+
+
+# Report the names that cannot be translated:
+grep 'not found' $ILLEGAL.stderr | cut -f 2 | sort -u > $ILLEGAL.names
+
+if [ "$UNTRANSLATEABLE" ] ; then
+  # Compile a list of "untranslateable" names assuming case can be ignored:
+  tr a-z A-Z < $ILLEGAL | sort -u > $ILLEGAL.UC
+  awk "-F$TAB" '{ print $1 }' $ALIASES | tr a-z A-Z | sort -u | comm -23 $ILLEGAL.UC - > $ILLEGAL.untranslateable
+  rm $ILLEGAL.UC
+fi

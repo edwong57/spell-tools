@@ -1,0 +1,226 @@
+#!/bin/sh
+# IN PROGRESS
+# peak@princeton.edu 2010.02.12
+
+TMP=/tmp/GEO
+
+BN=`basename $0`
+
+if [ "$1" = -h -o "$1" = --help ] ; then
+  cat <<EOF
+Syntax: $BN [ options ]
+Stdin: list of GEO accession numbers and filename pairs, one per line
+Stdout: for each pair, a row in SPELL_DATASETS format
+
+GEO is the first blank-delimited token read on stdin;
+the filename is the second.
+
+PMID will be set to 0 if no corresponding Pubmed ID is found; currently, the superseries is not checked.
+
+This script uses information contained in files obtained from NBIH.
+These files can be retained and/or reused by specifying the '-r' option.
+
+
+Options:
+ -r -- reuse any relevant files in $TMP if found, and retain any fetched files.
+ -v -- verbose
+
+NOTE: If a line in stdin begins with # then that line will be ignored.
+WARNING: The accuracy of the results is highly dependent on the details of the NCBI response.
+
+Examples:
+echo GSE2412  | $BN  # no PMID
+
+EOF
+  exit
+fi
+
+APPEND=
+REUSE=1
+SKIP=
+VERBOSE=1
+looking=1
+while [ $looking = 1 -a $# != 0 ]
+do case "$1" in
+      -r ) REUSE=1
+           shift
+           ;;
+      -v ) VERBOSE=1
+           shift
+           ;;
+      *  ) looking=0
+           ;;
+  esac
+done
+
+mkdir -p $TMP
+
+### FUNCTIONS ###
+
+# PMID should set PMID to "" or one or more Pubmed ids
+# GEOEXISTS is also set.
+function PMID {
+  PMID=
+  GEOEXISTS=
+  local GEO="$1"
+  if [ -r "$TMP/$GEO" ] ; then GEOEXISTS=1 ; fi
+  if [ ! "$REUSE" -o ! "$GEOEXISTS"  ] ; then
+    wget -q -O "$TMP/$GEO" "http://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?targ=self&form=text&view=brief&acc=$GEO"
+    # HTML: "http://www.ncbi.nlm.nih.gov/projects/geo/query/acc.cgi?acc=$GEO"
+    rc $? "wget $GEO"
+    if [ $rc != 0 ] ; then
+	verbose "removing $TMP/$GEO"
+        rm "$TMP/$GEO"
+	return
+    fi
+  fi
+  # Be sure to strip off ^M
+  PMID=`grep '^!Series_pubmed_id' $TMP/$GEO | sed 's,.*= *\([0-9,]*\) *,\1,' | sed 's///'`
+}
+
+# Search all the immediate superseries if any for the maximal PMID
+function superseries {
+  superseries=
+  if [ "$SKIP" ] ; then return ; fi
+  local GEO="$1"
+  local FOUND=
+  local EXISTS=
+  if [ -r "$TMP/$GEO.html" ] ; then EXISTS=1 ; fi
+   # gds/?term=$GEO"
+  if [ ! "$REUSE" -o ! "$EXISTS"  ] ; then
+    wget -q -O "$TMP/$GEO.html" "http://www.ncbi.nlm.nih.gov/projects/geo/query/acc.cgi?acc=$GEO"
+    rc $? "wget $GEO.html"
+    if [ $rc != 0 ] ; then
+      verbose "removing $TMP/$GEO.html"
+      rm "$TMP/$GEO.html"
+      return 
+    fi
+  fi
+  ANS=`awk '/This SubSeries is part of SuperSeries/, /^<\/table>/' $TMP/$GEO.html |\
+       sed -n 's,^<tr.*>\([A-Z]*[0-9]*\)</a></td>,\1,p'`
+  if [ ! "$EXISTS" -a ! "$REUSE" ] ; then rm "$TMP/$GEO.html" ; fi
+  if [ -z $ANS ] ; then
+      return
+  fi
+  verbose "examining superseries: $ANS"
+  for x in $ANS
+  do
+    PMID $x
+    if [ -z "$PMID" ] ; then
+      continue
+    fi
+    for p in $PMID
+      do         
+      if [ -z "$FOUND" ] ; then
+        FOUND=$p
+      elif [ $p -gt $FOUND ] ; then
+        FOUND=$p
+      fi
+    done
+  done 
+  verbose "PMID of superseries is $FOUND"
+  superseries=$FOUND
+}
+
+function say {
+  if [ "$APPEND" ] ; then
+       echo "$@" >> GEO_PMID
+   else
+       echo "$@"
+   fi
+}
+
+function verbose {
+  if [ "$VERBOSE" ] ; then
+    echo "$@"
+  fi
+}
+
+# Syntax: rc $? msg
+# Set rc and write msg to stderr
+function rc {
+  rc=$1
+  if [ "$rc" = 0 ] ; then return ; fi
+  shift
+  echo "$BN: $@ rc=$rc" >&2
+}
+
+# set $value
+function getValue {
+  local name="$1"
+  value=`grep '^!Series_'"$name"' *= *' $TMP/$GEO | head -1 | sed -s 's/^[^=]*= *//'`
+  # verbose "field $1 = $value"
+}
+
+# set $values
+function getValues {
+  local name="$1"
+  values=`grep '^!Series_'"$name"' *= *' $TMP/$GEO | sed -e 's/^[^=]*= *//' | tr "\n" "," | sed 's/,/, /g'`
+  # verbose "field $1 values = $values"
+}
+
+# NOTE: we must take care of CRLF line endings
+function getKeywords {
+  keywords=`grep '^!Series_summary = Keywords *= *' $TMP/$GEO | sed -e 's/^.* Keywords *= *//' | tr '\n\r' ,, | sed 's/,,/,/g' | sed 's/,/, /g'`
+  verbose "keywords=$keywords"
+}
+
+
+##########################
+
+echo "PubMedID	Filename	GeoID	PlatformID	channelCount	DatasetName	Description	NumConditions	NumGenes	FirstAuthor	AllAuthors	Title	Journal	PubYear	ConditionDescriptions	Tags"
+
+
+while read -r GEO Filename etc ; do
+  case "$GEO" in
+   "" | \#* ) continue ;;
+  esac
+  PMID $GEO
+  ANS=$PMID
+  if [ "$ANS" != "" ] ; then 
+	echo $GEO already has a PMID ... 
+        continue
+  fi
+
+  getValue citation
+  getValue contributor
+  getValue title
+  getValue summary
+  getKeywords
+
+tab="	"
+
+PubMedID=0
+# Filename
+GeoID=$GEO
+PlatformID="GPL?"
+channelCount=cc
+DatasetName=$title
+Description="$summary"
+NumConditions=nc
+NumGenes=ng
+FirstAuthor=fa
+AllAuthors=aa
+Title=t
+Journal=j
+PubYear=py
+ConditionDescriptions=cd
+Tags=$keywords
+
+echo "${PubMedID}${tab}${Filename}${tab}${GeoID}${tab}${PlatformID}${tab}${channelCount}${tab}${DatasetName}${tab}${Description}${tab}${NumConditions}${tab}${NumGenes}${tab}${FirstAuthor}${tab}${AllAuthors}${tab}${Title}${tab}${Journal}${tab}${PubYear}${tab}${ConditionDescriptions}${tab}${Tags}"
+
+  # if [ ! "$GEOEXISTS" -a ! "$REUSE" ] ; then rm "$TMP/$GEO" ; fi
+
+
+done
+
+
+exit
+
+#
+http://www.wip.ncbi.nlm.nih.gov/projects/geo/query/acc.cgi
+
+acc.cgi?acc=" + document.forms.ViewOptions.acc.value + "&targ=" + document.forms.ViewOptions.targ.value +
+                  "&form=" + document.forms.ViewOptions.form.value + "&view=" + document.forms.ViewOptions.view.value +
+                  ((document.getElementById("token") == undefined || document.forms.ViewOptions.token.value.length == 0) ? "" :
+                  "&token=" + document.forms.ViewOptions.token.value), "_self");
