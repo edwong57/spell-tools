@@ -1,0 +1,318 @@
+#!/bin/bash
+# Copyright (C) 2011 peak@princeton.edu
+# License: Creative Commons Attribution-NonCommerical-ShareAlike 3.0 Unported (CC BY-NC-SA 3.0)
+# See http://creativecommons.org/licenses/by-nc/3.0/
+# Attribution shall include the copyright notice above.
+
+# peak@princeton.edu 2011
+# For help: $0 --help
+
+VERSION=0.1.2
+
+# Requires: 
+
+BN=`basename $0`
+DN=$(cd $(dirname $0); pwd)
+
+SOFTDIR=.
+PCLDIR=.
+OUTDIR=.
+
+function help {
+  cat << EOF
+Syntax: $BN [OPTIONS] ID.pcl ...
+    or: $BN --soft SOFTFILE --pcl PCLFILE
+
+If one or more ID.pcl files is specified, then this script will
+produce corresponding {ID}.info files, each of which is a two-line TSV
+file with a header line and information derived from corresponding
+family.soft and .pcl files.
+
+By default, information is derived from:
+
+  {SOFT}/{GSE}_family.soft and
+  {PCL}/{ID}.pcl 
+
+where {GSE} denotes the period-delimited prefix of ID, and {SOFT} and
+{PCL} are directories determined by the options.
+
+In the second form, {SOFTFILE} and {PCLFILE} are files and the two
+.info lines are sent to stdout.
+
+Options for the first syntactic form:
+
+ --soft SOFT :: location of the family.soft or family.soft.gz files (default: $SOFTDIR)
+ --pcl  PCL  :: location of the .pcl files (default: $PCLDIR)
+
+
+Example 1.
+
+If the "download" subdirectory of the pwd contains
+GSEnnn_family.soft.gz files, then
+
+  $BN --soft download GSE123.spf.pcl
+
+will combine information from the given file and
+download/GSE123_family.soft.gz to produce GSE123.sfp.info.
+
+Example 2.
+
+If "GSE123_set*.pcl" matches GSE123_setA.pcl and GSE124_setA.pcl 
+then the command
+
+  $BN GSE123_set*.pcl
+
+will combine information from GSE123_setA.pcl and GSE123_setA_family.soft
+to produce GSE123_setA.info, and similarly for the second pcl file.
+
+Example 3.  
+  $BN --soft download/GSE123_setA_family.soft --pcl GSE123_setA.pcl > GSE123_setA.info
+
+
+Note: Since this script is intended for GSE files and since GEO says
+"Sample Value Type pertains only to curated Datasets", no attempt to
+find !dataset_value_type or #VALUE is made.
+
+Acknowledgements and Provenance:
+
+This script is based on getInfoFromSoftFiles.rb by Matt Hibbs and
+SeriesFamilyParser.java by Lars Bongo.
+
+Version: $BN $VERSION
+
+See source for copyright and licensing details.
+
+EOF
+exit
+}
+
+function die {
+    echo "$BN: $@" >&2
+    exit 1
+}
+
+function verbose {
+  if [ "$VERBOSE" ] ; then
+    echo "$@"
+  fi
+}
+
+
+while [ "$1" ]
+do case "$1" in
+      -h | --help ) help
+           exit
+           ;;
+      -v | --verbose ) VERBOSE=1
+           shift
+           ;;
+      --soft ) SOFTDIR="$2"
+           shift 2
+           ;;
+      --pcl ) PCLDIR="$2"
+           shift 2
+           ;;
+      -* ) echo "$BN: unknown option $1"
+           exit 1
+           ;;
+      *  ) break
+           ;;
+  esac
+done
+
+function LHS {
+  local file="$1"
+  local grep=grep
+
+  if [ ! -r "$file" ] ; then
+     file="$file.gz"
+     grep=zgrep
+  fi
+  $grep '^[!#^]' "$file" |\
+  awk -v file="$(basename $1)" 'BEGIN {
+    T="	" # tab
+    tag_dset = "!Series_geo_accession"      # agree with Lars (but ^SERIES also exists)
+    tag_org = "!Platform_organism"          # agree with Lars
+    tag_plat = "!Series_platform_id"        # agree with Lars (but ^PLATFORM also exists)
+    # tag_valType = "!dataset_value_type = "  # Lars says: NOT IN GSE FILES and GEO says: "Sample Value Type; pertains only to curated Datasets"
+    # tag_valType = "#VALUE"                  # GSE files do contain this tag 
+    tag_chanCount = "!Sample_channel_count" # may be multiple and inconsistent.  Lars does not count
+    tag_title = "!Series_title"             # agree with Lars
+    tag_desc = "!Series_summary"            # agree with Lars // may be multiple
+    tag_pmid = "!Series_pubmed_id"          # per Lars
+    tag_featCount = "!Platform_data_row_count" # agree with Lars
+
+    tag_sample_id = "!Series_sample_id"      # yes but Lars uses ^SAMPLE, which should be equivalent
+    tag_modDate = "!Series_last_update_date" # agree with Lars
+
+    re = "^[^=]*= *"
+
+    print "File\tDatasetID\tOrganism\tPlatform\tValueType\t#channels\tTitle\tDescription\tPubMedID\t#features\t#samples\tdate"
+
+    org = platform = dset = title = desc = pmid = featCount = valType = date = "" 
+    sampCount = chanCount = 0
+  }
+      
+      $1 == tag_org {
+        org = $0; sub( re, "", org )
+        next
+      }
+      $1 == tag_plat {
+        platform = $0; sub( re, "", platform )
+        next
+      }
+      $1 == tag_dset {
+        dset = $0; sub( re, "", dset )
+        next
+      }
+      $1 == tag_title {
+        title = $0; sub( re, "", title )
+        next
+      }
+      $1 == tag_desc {
+        desc = $0; sub( re, "", desc )
+        next
+      }
+      $1 == tag_pmid {
+        pmid = $0; sub( re, "", pmid )
+        next
+      }
+      $1 == tag_featCount {
+        featCount = $0; sub( re, "", featCount )
+        next
+      }
+      $1 == tag_chanCount {
+        n=$0; sub( re, "", n )
+        # chanCount += n
+        chanCount = n
+        next
+      }
+      $1 == tag_sample_id {
+        sampCount += 1
+        next
+      }
+      # $1 == tag_valType {
+      #   valType = $0; sub( re, "", valType )
+      #   next
+      # }
+      $1 == tag_modDate {
+        date = $0; sub( re, "", date )
+        next
+      }
+      END { print file  "\t"  dset  "\t"  org  "\t"  platform  "\t"  valType  "\t"  chanCount  "\t"  title  "\t"  desc  "\t"  pmid  "\t"  featCount  "\t"  sampCount  "\t"  date }
+'
+} # end of function
+
+# Process a .pcl file
+function RHS {
+ awk 'BEGIN {print "Min\tMax\tMean\t#Neg\t#Pos\t#Zero\t#MV\t#Total\t#Channels\tlogged\tzerosAreMVs\tMVcutoff" }'
+
+ cat "$1" |\
+ awk '-F\t' '
+   func isNumeric(x) { return x == x+0 }
+
+   BEGIN {
+     min = 1e10;
+     max = -1e10;
+     mean = 0.0;
+     numPos = 0.0;
+     numNeg = 0.0;
+     numZero = 0.0;
+     numMissing = 0.0;
+     numTotal = 0.0;
+   }
+   NR <= 2 { next }		
+   NF == 0 { next }
+   # first 3 columns are gene name, gene name, and EWEIGHT
+   { for (i = 3; i <= NF; i++) {
+		if (! isNumeric($i)) {
+			numMissing += 1;							
+		}
+		else {
+			numTotal += 1;							
+			val = $i;
+			mean += val;
+			if (val > max) {
+				max = val;
+			}
+			if (val < min) {
+				min = val;
+			}
+			if (val > 0) {
+				numPos += 1;
+			}
+			else if (val < 0) {
+				numNeg += 1;
+			}
+			else {
+				numZero += 1;
+			}
+		}
+     }
+   }
+   END { 
+     tested_numChans = 2;
+     tested_logXformed = 1;
+     tested_zerosMVs = 0;
+     tested_MVcutoff = "NA";
+
+     if (numTotal != 0) {
+       mean = mean /numTotal;
+     }
+     else {
+       mean = 0;
+     }
+
+     if ((numNeg == 0) || ((numPos / numNeg) > 7.5)) {
+     	tested_numChans = 1;
+     }
+     if (max > 100) {
+     	tested_logXformed = 0;
+     }
+     if (numZero > (5 * numMissing)) {
+     	tested_zerosMVs = 1;
+     }
+     if (tested_numChans == 1) {
+     	if (tested_logXformed == 1) {
+     		tested_MVcutoff = 0;
+     	}
+     	else if (min > -500) {
+     		tested_MVcutoff = 2;
+     	}
+     }
+     print min "\t" max "\t" mean "\t" numNeg "\t" numPos "\t" \
+         numZero "\t" numMissing "\t" numTotal "\t" tested_numChans "\t" \
+         tested_logXformed "\t" tested_zerosMVs "\t" tested_MVcutoff ;
+
+   }'
+} # end of function
+
+
+# If we have two files ....
+if [ -f "$SOFTDIR" -a -f "$PCLDIR" ] ; then
+  if [ $# != 0 ] ; then
+     die For help type $BN --help
+  fi
+  paste <( LHS "$SOFTDIR") <( RHS "$PCLDIR" )
+  exit
+fi
+
+SOFTDIR=${SOFTDIR%/}
+PCLDIR=${PCLDIR%/}
+
+for f
+do
+  ID=${f%.pcl}
+  gse=${ID/.*/}
+  if [ -r "$SOFTDIR/${gse}_family.soft" -o -r "$SOFTDIR/${gse}_family.soft.gz" ] ; then
+    if [ -r "$PCLDIR/$f" ] ; then
+      verbose "combining information from $SOFTDIR/${gse}_family.soft and $PCLDIR/$f"
+      paste <( LHS "$SOFTDIR/${gse}_family.soft") <( RHS "$PCLDIR/$f" ) > "$ID.info"
+    else
+      echo "$BN: $PCLDIR/$f not found"
+    fi
+  else
+    echo "$BN: neither $SOFTDIR/${gse}_family.soft nor $SOFTDIR/${gse}_family.soft.gz were found"
+  fi
+done
+

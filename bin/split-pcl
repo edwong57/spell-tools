@@ -1,0 +1,278 @@
+#!/bin/bash
+# Copyright (C) 2011 peak@princeton.edu
+# License: Creative Commons Attribution-NonCommerical-ShareAlike 3.0 Unported (CC BY-NC-SA 3.0)
+# See http://creativecommons.org/licenses/by-nc/3.0/
+# Attribution shall include the copyright notice above.
+
+# peak@princeton.edu 2011
+# For help: $0 --help
+
+VERSION=0.1.3
+
+# 0.1.2: tested
+# 0.1.3: ! = complement
+
+# Requires: 
+
+BN=`basename $0`
+
+PROMPT="Enter ? for help, / to skip this pcl file, or: NAME LIST, e.g. setA 4-8,9-11,14- "
+
+function helpme {
+cat <<EOF
+
+NAME is a character string that will be used to construct the filename
+for the selection.  Specifically, the filename will be
+{PREFIX}_{NAME}.pcl where {PREFIX} is the period-delimited prefix of
+the input filename.  NAME should not contain / or \ or other
+characters unsuitable for use in a filename.
+
+LIST may either be a comma-separated list of integers and/or ranges
+specifying the column numbers of the data columns for this selection,
+or the complement of such a list, written by prefixing the list with
+an exclamation mark, e.g. !7-10,20-25
+
+The items in the list can be any combination of these forms:
+
+N   :: the N-th column 
+N-  :: is the range of columns from N through the last column
+N-M :: the range of columns N through M
+-M  :: the range of columns from 4 through M
+
+The column numbers are shown to the left of the column headings.
+
+Columns 1 to 3 are always included.
+
+No file will be overwritten unless specifically requested.
+
+EOF
+}
+
+function help {
+cat <<EOF
+Syntax: $BN file ...
+
+Interactively split each specified PCL file into one or more PCL files by column numbers.
+
+For each specified file, the user will be presented with a list of column numbers and headings
+followed by the prompt:
+
+$PROMPT
+
+The help text available at that point is as follows:
+
+EOF
+
+helpme
+
+cat<<EOF
+
+
+Version: $BN $VERSION
+
+See source for copyright and licensing details.
+EOF
+}
+
+while [ "$1" ]
+do case "$1" in
+      -h | --help ) help
+           exit
+           ;;
+      -v | --verbose ) VERBOSE=1
+           shift
+           ;;
+      -* ) echo "$BN: unknown option $1"
+           exit 1
+           ;;
+      *  ) break
+           ;;
+  esac
+done
+
+function die {
+    echo "$BN: $@" >&2
+    exit 1
+}
+
+function verbose {
+  if [ "$VERBOSE" ] ; then
+    echo "$@"
+  fi
+}
+
+# ask $@ and get a non-blank RESPONSE
+function ask {
+   RESPONSE=
+   while [ -z "$RESPONSE" ] ; do
+     read -p "$@" RESPONSE
+   done
+}
+
+# Syntax: negation LIST
+# where LIST is a list suitable for cut
+# Take care never to cut any of the first three columns
+# Global TRANSPOSE2
+function negation {
+  local MAX=$TRANSPOSE2
+  local TAB="	"
+  if [ -z "$TRANSPOSE2" ] ; then die INTERNAL ERROR: TRANSPOSE2 not set; fi
+  seq  -s "$TAB" 1 $MAX | cut  -f "$1" | tr '\t' '\n' |\
+    grep -v '^[123]$' |\
+    comm -23 <(seq 1 $MAX) - |\
+    tr '\n' , |\
+    sed 's/,$//'
+}
+
+# Set NAME and LIST, and check the column numbers are in (4 .. TRANSPOSE2)
+# Syntax: answer PROMPT ...
+# Global NAME LIST TRANSPOSE2 VERBOSE
+function answer {
+  NAME=
+  LIST=
+  local group each
+  while [ -z "$NAME" ] ; do
+
+    read -p "$@" NAME LIST
+    case "$NAME" in
+     "?" ) helpme ; continue ;;
+     ""  ) continue ;;
+     "." | / ) return ;;
+    esac
+
+    if [[ $NAME =~ [^[:graph:]]|[\\/] ]] ; then 
+      echo "$BN: NAME must only contain characters suitable for use in a filename"
+      NAME=
+      continue
+    fi
+
+    LIST=$(echo "$LIST" | tr -d ' ')
+    verbose "NAME=$NAME"
+    verbose "LIST=$LIST"
+    if [ -z "$LIST" ] ; then echo "$BN: skipping $NAME as LIST is empty." ; NAME="" ; continue ; fi
+
+    if [ "${LIST:0:1}" = '!' ] ; then 
+      LIST=$(negation "${LIST:1}")
+      verbose "after negation, LIST=$LIST"
+    else
+      # check the column numbers are in range
+      group=$(echo "$LIST"  | tr ',-' '\n')
+      for each in ${group[@]} ; do
+        verbose "each=$each"
+        if [[ $each =~ ^[0-9]*$ ]] ; then
+           if [ "$each" -gt $TRANSPOSE2 ] ; then
+             echo "The value $each is not in the range 4-$TRANSPOSE2"
+             NAME=
+             break
+           fi
+        else
+          echo "The value $each is not an integer"
+          NAME=
+          break
+        fi
+      done
+    fi
+    if [ "${LIST:0:1}" = - ] ; then LIST="1${LIST}" ; fi
+  done
+}
+
+
+function execute {
+  verbose "$@"
+  "$@"  
+}
+
+# Global: VERBOSE
+# Return the number of columns in TRANSPOSE2
+# Skip the first three
+function transpose2 {
+  local DELIMITER="	"
+  local row1=1
+  local row2=-1
+  local NUMBER=1  # 0 means show the column index (IO=0); 1 means show the column number (IO=1)
+  echo "# Label"
+  awk -F"$DELIMITER" -v row1="$row1" -v row2="$row2" -v verbose="$VERBOSE" -v number="$NUMBER" '
+  NF == 0 { 
+    if (verbose) { print "First row is empty so bumping row1 and row2" }
+    row1++; row2++;
+  }
+  NR == row1 {
+    if (verbose) { print "First row NF=" NR }
+    n=NF
+    for (i=1; i<=NF; i++) { header[i] = $i } 
+  }
+  NR == row2 {
+    if (verbose) { print "Second row NF=" NR }
+    if (NF > n) { n = NF }
+    for (i=1; i<=NF; i++) { value[i]=$i  } 
+  }
+  END {
+    if (verbose) { print "n="n }
+    if (number != "") { for (i=4; i<=n; i++) { print i + number - 1, header[i], value[i] } }
+    else        { for (i=4; i<=n; i++) { print    header[i], value[i] } }
+  }
+' "$@"
+  TRANSPOSE2=$(awk -F"$DELIMITER" '{ print NF ; exit}' "$1")
+}
+
+TMP=/tmp/$USER
+mkdir -p "$TMP" 
+if [ $? != 0 ] ; then echo "$BN: unable to mkdir $TMP" ; exit 1 ; fi
+
+############ FOR EACH FILE
+
+N=$#
+I=0
+for f
+do
+  I=$((I + 1))
+
+  if [ ! -r "$f" ] ; then
+    echo "$f :: not found"
+    continue
+  fi
+
+  dn=$(dirname "$f")
+  gse=$(basename "$f")
+  gse="${gse/.*/}"
+  if [ "$dn" != . ] ; then gse="$dn/$gse" ; fi
+  verbose dn=$dn
+  verbose gse=$gse
+
+  SPLIT=1
+  while [ -n "$SPLIT" ] ; do
+    echo "$f ::"
+    transpose2 "$f"
+    verbose "# columns=$TRANSPOSE2"
+    answer "$PROMPT"
+    case "$NAME" in 
+        "?" ) continue ;;
+        "/" ) SPLIT=
+	      break
+              ;;
+    esac
+    OUT="${gse}_$NAME.pcl"
+    if [ -r "$OUT" ] ; then
+      read -p "$OUT already exists. Enter o to overwrite or anything else to skip creating this file: " RESPONSE
+      case "$RESPONSE" in
+        o ) ;;
+        * ) continue ;;
+      esac
+    fi
+    verbose cut -f "1-3,$LIST" FROM "$f"
+    cut -f "1-3,$LIST" < "$f" > "$OUT"
+    verbose "OUT=$OUT"
+    if [ $I -lt $N ] ; then
+       read -p "Enter '/' to skip to the next file, '.' to exit, or anything else to continue with the same file: " ANS etc
+    else
+       read -p "Enter '/' or '.' to exit, or anything else to continue with the same file: " ANS etc
+       if [ -z "$ANS" ] ; then ANS=. ; fi
+    fi
+    case "$ANS" in
+      "." ) exit ;;
+       / ) SPLIT=; break ;;
+       * ) ;;
+
+    esac
+  done
+done

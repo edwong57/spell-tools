@@ -1,0 +1,148 @@
+#!/bin/bash
+# Copyright (C) 2011 peak@princeton.edu
+# License: Creative Commons Attribution-NonCommerical-ShareAlike 3.0 Unported (CC BY-NC-SA 3.0)
+# See http://creativecommons.org/licenses/by-nc/3.0/
+# Attribution shall include the copyright notice above.
+
+# peak@princeton.edu 2011
+# For help: $0 --help
+
+VERSION=0.1
+ORGANISM="Saccharomyces cerevisiae"
+
+# Requires: 
+
+BN=`basename $0`
+DN=`dirname $0`
+
+function help {
+cat <<EOF
+Syntax: $BN [OPTIONS] file ...
+
+Echo the GDSnnnn component of the basename of the files matching the query.
+
+If the .soft.gz file references the organism, then leave an unzipped copy in the same directory.
+
+Options:
+
+--use           :: if the unzipped file exists then use it
+--keep          :: always keep any unzipped files
+--organism NAME :: defaults to $ORGANISM
+
+Notes:
+
+"fgrep -m 1" is used for speed.
+
+MetaMatchSoft.java accepts this argument: 
+dataset_sample_organism=Saccharomyces cerevisiae,platform_organism=Saccharomyces cerevisiae
+If ANY of the search conditions is met, MetaMatchSoft.java outputs the filename.
+
+Soft file has:
+!dataset_sample_organism = 
+!dataset_platform_organism =
+
+Version: $BN $VERSION
+
+See source for copyright and licensing details.
+EOF
+}
+
+
+while [ "$1" ]
+do case "$1" in
+      -h | --help ) help
+           exit
+           ;;
+      -v | --verbose ) VERBOSE=1
+           shift
+           ;;
+      --keep ) KEEP=1
+           shift
+           ;;
+      --organism ) ORGANISM="$2"
+           shift 2
+           ;;
+      --use ) USE=1
+           shift
+           ;;
+      -* ) echo "$BN: unknown option $1"
+           exit 1
+           ;;
+      *  ) break
+           ;;
+  esac
+done
+
+function continuep {
+   local PROMPT="$1"
+   if [ -z "$1" ] ; then
+      PROMPT="Continue? [yN]"
+   fi
+   read -p "$PROMPT " x
+   case "$x" in
+     y | Y | yes | YES ) return
+     ;;
+   esac
+   exit
+}
+
+function verbose {
+  if [ "$VERBOSE" ] ; then
+    echo "$@"
+  fi
+}
+
+# global: everything
+function maybe_unzip {
+  if [ "$f" = "$base" ] ; then return ; fi
+  if [ "$USE" -a -r "$base" ] ; then return ; fi
+  verbose gunzip -c "$f" 
+  gunzip -c "$f" > "$base"
+}
+
+#!!
+TMP=tmp.$$
+TMP=tmp
+
+OUT=files.out
+
+echo > $OUT
+
+# zgrep -q "!dataset_sample_organism = $ORGANISM" $f
+
+count=0
+# for f in *.gz
+# for f in ~/bitbucket/function/microarrays/download/ftp.ncbi.nih.gov/pub/geo/DATA/SOFT/GDS/GDS1299.soft.gz
+for f in ~/bitbucket/function/microarrays/download/ftp.ncbi.nih.gov/pub/geo/DATA/SOFT/GDS/*.gz
+do
+  count=$((count + 1))
+  # if [ $count -gt 25 ] ; then break ; fi
+  if [ ! -r "$f" ] ; then echo "$f is unreadable" ; continue ; fi
+  found=
+
+  base=${f/%.gz/}
+  bn=$(basename "$base")
+  ds=${bn/%.soft/}
+  maybe_unzip
+
+  dataset=$(fgrep -m 1 "^DATASET" "$base" | sed 's/[^=]*= *\(.*\) *$/\1/')
+  if [ "$dataset" != "$ds" ] ; then "echo WARNING: internal DATASET name of $f is $ds" ; fi
+  org=$(fgrep -m 1 "!dataset_platform_organism" "$base" | sed 's/[^=]*= *\(.*\) *$/\1/')
+  if [ "$org" = "$ORGANISM" ] ; then
+     verbose "$org found in platform of $f"
+     echo "$base" >> "$OUT"
+     found=1
+  else
+     org=$(fgrep -m 1 "!dataset_sample_organism" "$base" | sed 's/[^=]*= *\(.*\) *$/\1/')
+     if [ "$org" = "$ORGANISM" ] ; then
+       verbose "$org found in sample of $f"
+       echo "$base" >> "$OUT"
+       found=1
+     fi
+  fi
+  # To keep or not to keep:
+  if [ -n "$KEEP" -o  "$f" = "$base" ] ; then continue; fi
+  if [ -z "$found" ] ; then rm "$base" ; fi
+done
+
+wc -l $OUT
