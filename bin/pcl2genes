@@ -1,0 +1,34 @@
+#!/bin/sh
+# peak@princeton.edu 12/2010
+# For help: $0 --help
+
+function help {
+cat <<EOF
+Syntax: $BN file ...
+
+Generate on stdout a sorted list of distinct gene names in the specified PCL files.
+
+EOF
+}
+
+while [ "$1" ]
+do case "$1" in
+      -h | --help ) help
+           exit
+           ;;
+      *  ) break
+           ;;
+  esac
+done
+
+TMP=/tmp/pcl2genes.$$
+for f
+do
+  tail -n +3 "$f" | awk "-F\t" '{print $1}' >> $TMP
+done
+
+if [ -r $TMP ] ; then
+  sort -u $TMP
+  rm $TMP
+fi
+

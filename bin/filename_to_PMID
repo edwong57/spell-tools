@@ -1,0 +1,94 @@
+#!/bin/sh
+# peak@princeton.edu 2010.02.19
+# For SPELL project
+
+# Dependency: This script will normally use $DN/getPMID
+
+BN=`basename "$0"`
+DN=`dirname "$0"`
+
+# The name of the file that might be generated:
+GEO_PMID_FILENAME=GEO_PMID
+
+if [ "$1" = "-h" -o "$1" = "--help" ] ; then
+cat <<EOF
+Syntax: $BN [ -d dir ] [GEO_PMID]
+where "dir" defaults to ".".
+If GEO_PMID is not specified, then if GEO_PMID is in the pwd, then that will be used to define the
+GEO-to-PMID mapping, otherwise an attempt to generate it will be made using getPMID.
+
+For each .pcl file, filename, in dir, this script produces output in the FILENAME_PMID format,
+that is, it produces lines of the form:
+
+filename PMID
+
+where PMID is a Pubmed ID or 0 determined by the contents of the GEO_PMID file,
+which should consist of lines of the form:
+
+GEO PMID
+
+where PMID is the Pubmed ID corresponding to the GEO accession code, GEO, or 0.
+It is assumed that the .pcl files have names beginning with the GEO code followed by _.
+EOF
+  exit
+fi
+
+if [ "$1" = "-d" ] ; then
+  DIR="$2"
+  shift 2
+  if [ ! -d "$DIR" ] ; then
+    echo $BN: $DIR does not exist.
+    exit 1
+  fi
+else
+  DIR=.
+fi
+
+function GEO_PMID {
+   GEO_PMID=
+   if [ -r $GEO_PMID_FILENAME ] ; then
+      GEO_PMID=$GEO_PMID_FILENAME
+      return
+   fi
+   getPMID=$DN/getPMID
+   if [ ! -x "$getPMID" ] ; then
+     getPMID=`which getPMID`
+     if [ "$getPMID" = "" ] ; then
+       echo $BN: unable to find getPMID
+       exit 1
+     fi
+   fi
+   (cd "$DIR" ; ls *.pcl ) | sed 's,^\([^_]*\)_.*,\1,' | sort -u | $getPMID > $GEO_PMID_FILENAME
+   if [ -r $GEO_PMID_FILENAME ] ; then
+       GEO_PMID=$GEO_PMID_FILENAME
+   else
+       echo $BN: getPMID appears to have failed
+       exit 1
+   fi
+}
+
+if [ "$1" = "" ] ; then
+  # if GEO_PMID succeeds $GEO_PMID will be nonblank
+  GEO_PMID
+else
+  GEO_PMID="$1"
+  shift
+fi
+
+if [ ! -r "$GEO_PMID" ] ; then
+  echo $BN: unable to find GEO_PMID file.
+  exit 1
+fi
+
+for f in `( cd "$DIR" ; ls *.pcl )`
+do
+  geo=`echo "$f" | sed 's,^\([^_]*\)_.*,\1,'`
+  pmid=`grep "^${geo} " "$GEO_PMID" | awk '{print ($2 == "") ? 0 : $2 }'`
+  echo "${f}	${pmid}"
+done
+
+exit
+
+# Alternatively:
+# JOIN f geo WITH geo pmid ON geo
+# join -1 2 -2 1 FILE1 GEO_PMID.1

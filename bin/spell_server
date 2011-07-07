@@ -1,0 +1,576 @@
+#!/bin/bash
+# Maintained by spell@jax.org
+# Originally by: peak@princeton.edu 2010.03.24
+
+# WARNING: The standard SPELL config.txt file has paths hardwired in.
+
+# The following resources will be used if they are available:
+# * pgrep 
+# * $DN/.spellrc
+
+#VERBOSE is set in the command line processing if -v is passed.
+VERBOSE= # while testing
+
+# ECHO=echo # make toothless
+ECHO=
+
+BN=`basename $0`
+
+# To simplify matters look for .spellrc without regard to symbolic links
+REAL=$(readlink "$0" 2> /dev/null)
+if [ -z "$REAL" ] ; then 
+  REAL=$0
+fi
+DN=`dirname "$REAL"`
+
+PIDS=$DN/../tmp/pids
+
+if [ "$1" = -h -o "$1" = --help ] ; then
+cat <<EOF
+Syntax: $BN [OPTIONS]
+or: $BN [OPTIONS] [ start | stop | restart ] [ SERVICE ... ]
+or: $BN [start | restart] Passenger
+or: $BN [status | resync]
+
+where:
+ - 'SERVICE ...' is one or more of: ruby search_server go_server
+ 
+ -  the notation [ x | ...] means exactly one of the actions should be specified.
+
+This script supports the management of the SPELL web application.
+
+It has options for starting, stopping, restarting, and determining
+the status of the underlying SPELL processes, whether in a webrick
+or Passenger environment.
+
+The first form is equivalent to specifying "start".
+
+In the second form, if no SERVICE is specified, then appropriate actions will be taken,
+depending on whether or not a Passenger spawn server is already
+running as root, as explained below.  
+
+To update the files in the directory that keeps track of process ids, use resync.
+
+The functioning of this script depends on the following environment variables:
+
+SPELL_HOME -- absolute path of directory in which spell_web etc exists.
+SPELL_DATA -- absolute path of directory in which gene_association.* exists.
+GENE_ONTOLOGY -- absolute pathname of the gene_ontology.obo file.
+GENE_ASSOCIATION -- absolute pathname of the gene_association.* (.sgd, .mgi, etc.) file.
+SEARCH_THREADS -- the number of threads that should be used by the search backend server.
+
+These variables are normally specified in the .spellrc file in the same
+directory as this script.  This file will be sourced unless the -e option
+specifies another file.
+
+Options:
+-e FILE :: source FILE rather than .spellrc in the directory of this script;
+           FILE may be /dev/null.
+-t      :: test that the required information is available and then exit.
+-u USER :: when attempting to determine the PID of running processes,
+           use the specified userid rather than the userid associated with
+           the execution of this script.
+-v      :: verbose
+
+Examples:
+
+ $BN start search_server
+
+ $BN start go_server
+
+Notes:
+This script refers to parameter values specified in the file
+"\$SPELL_HOME/spell_web/config/environment.rb"
+
+The pids of processes started by this script are recorded in $PIDS/
+If these files exist, they are consulted, but not relied upon exclusively.
+
+This script may not be suitable for use as a system initialization script
+because it may not conform to the relevant standards.
+
+If a "Passenger spawn server" is running as "root", then specifying
+"start" without specifying any SERVICE is equivalent to specifying
+"start search_server go_server".  Otherwise, the effect is equivalent to specifying
+"start search_server go_server ruby".
+
+If the SPELL configuration is oriented to a Passenger environment then
+starting the "ruby" service is not recommended.
+EOF
+  exit
+fi
+
+PGREP=`which pgrep 2> /dev/null`
+if [ $? = 1 ] ; then 
+  PGREP=
+fi
+
+if [ "$ECHO" ] ; then
+  echo "$BN: Note: ECHO=$ECHO"
+fi
+
+mkdir -p $PIDS
+
+########### Functions
+
+function verbose {
+  if [ "$VERBOSE" ] ; then
+    echo "$@"
+  fi
+}
+
+# Produce tab-delimited output
+function myfps {
+  ps -o user= -o pid= -o comm= -o command= "$@" | sed -e 's/ *$//' -e 's/^\([^ ]*\) *\([^ ]*\) *\([^ ]*\)* */\1	\2	\3	/'
+}
+
+# For mypgrep:
+function myps {
+  ps -o user= -o pid= -o comm= -o command= "$@"
+}
+
+# Simulate the following uses of pgrep if need be:
+# mypgrep -f -u USER STRING  --> myfps -u USER  | awk -Ftab '$4 == STRING {print $2}' STRING=STRING
+# mypgrep -f STRING          --> myfps          | awk -Ftab '$4 == STRING {print $2}' STRING=STRING
+# mypgrep -u USER STRING     --> ps $PSOUT -C STRING | awk '$1 == USER {print $2}' USER=USER
+# mypgrep STRING             --> ps $PSOUT -e        | awk '$3 == STRING {print $2}' STRING="$1"
+# (pgrep -f FULL_COMMAND)
+function mypgrep {
+  if [ "$PGREP" ] ; then
+     # "$@" stores all the arguments, individually quoted
+     pgrep "$@"
+  else
+     local PSOUT
+     case "$1" in
+     -f )
+        case "$2" in
+           -u )     myfps -u "$3" | awk -F'	' '$4 == STRING {print $2}' STRING="$4"
+           ;;
+           * )      myfps -e      | awk -F'	' '$4 == STRING {print $2}' STRING="$2"
+           ;;
+        esac
+        ;;
+     -u )           myps -C "$3" | awk '$1 == USER {print $2}' USER="$2"
+        ;;
+      * )           myps -e      | awk '$3 == STRING {print $2}' STRING="$1"
+        ;;
+      esac
+   fi
+}
+
+function maybestart {
+  while [ "$1" != "" ] ; do
+    PID "$1"
+    if [ "$PID" ] ; then
+      echo "$BN: $1 appears to be already running with pid=$PID"
+      verbose Consider using resync, stop, or restart.
+    else
+      verbose start "$1"
+      start "$1"
+    fi
+    shift
+  done
+}
+
+# start without pre-checks
+function start {
+  while [ $# != 0 ] ; do
+    case "$1" in
+      ruby )
+        # The server must be started from $SPELL_HOME/spell_web otherwise relative paths will fail:
+        $ECHO cd $SPELL_HOME/spell_web
+        verbose ruby script/server -p "$SPELL_PORT" &
+        $ECHO ruby script/server -p "$SPELL_PORT" &
+        writeout $! $PIDS/ruby
+        shift ;;
+
+     passenger | Passenger )
+        verbose touch $SPELL_HOME/spell_web/tmp/restart.txt
+        $ECHO touch $SPELL_HOME/spell_web/tmp/restart.txt
+        shift ;;
+
+     search_server | SearchServer | searchserver )
+       $ECHO cd $SPELL_HOME/bin
+       verbose ./spell++ --port $SPELL_SOCKET_NUMBER --max_threads $SEARCH_THREADS $SPELL_HOME/spell_web/config/config.txt &
+       $ECHO ./spell++ --port $SPELL_SOCKET_NUMBER --max_threads $SEARCH_THREADS $SPELL_HOME/spell_web/config/config.txt &
+       writeout $! $PIDS/search_server
+       shift ;;
+
+     go_server | GoServer | goserver )
+       $ECHO cd $SPELL_HOME/bin
+       verbose java -Xmx512m -jar go_server.jar $GENE_ONTOLOGY $GENE_ASSOCIATION P $GO_SOCKET_NUMBER &
+       $ECHO java -Xmx512m -jar go_server.jar $GENE_ONTOLOGY $GENE_ASSOCIATION P $GO_SOCKET_NUMBER &
+       writeout $! $PIDS/go_server
+       shift ;;
+     * )
+      echo $0: start: UNRECOGNIZED PARAMETER "$1"
+      exit 1
+      ;;
+   esac
+  done
+}
+
+# Syntax: remove process
+# rm the PIDS file if it exists
+function remove {
+  if [ -w $PIDS/$PROCESS ] ; then
+     verbose rm $PIDS/$PROCESS
+     $ECHO rm $PIDS/$PROCESS
+  fi
+}
+
+# One at a time
+function stop {
+  local PROCESS="$1"
+  local PID
+  PID $PROCESS
+  if [ "$PID" ] ; then
+     verbose kill -s SIGWINCH "$PID"
+     $ECHO kill -s SIGWINCH "$PID"
+     $ECHO sleep 1
+     ps $PID > /dev/null
+     rc=$?
+     if [ $rc = 0 ] ; then
+       verbose kill -s SIGKILL "$PID"
+       $ECHO kill -s SIGKILL "$PID"
+       $ECHO sleep 1
+       ps $PID > /dev/null
+       rc=$?
+       if [ $rc = 0 ] ; then
+          echo "$BN: unable to stop $PROCESS ($PID)"
+          exit 2
+       fi
+     fi
+     remove "$PROCESS"
+  else
+    verbose $PROCESS not found     
+  fi 
+}
+
+# Syntax PID PROCESS
+# Return the pid based on the pids/ directory if found, else try pgrep etc
+function PID {
+  local PROCESS="$1"
+  if [ -r "$PIDS/$PROCESS" ] ; then
+     PID=`head -1 $PIDS/$PROCESS`
+     return
+  fi
+  PID_FROM_PROCESS $PROCESS
+  PID=$PID_FROM_PROCESS
+}
+
+# Syntax: PID_FROM_PROCESS [ruby | passenger | ... ] [USER]
+# "ruby" is intended to correspond to the webrick process
+# Use $THISUSER if the second argument is not given.
+function PID_FROM_PROCESS {
+  local PROCESS="$1"
+  local p
+  local u
+  PID_FROM_PROCESS=
+  if [ "$2" ] ; then u="$2" ; else u=$THISUSER ; fi
+  case $PROCESS in
+  ruby )
+     # Looking for the "ruby script/server" process
+     # "pgrep -u "$THISUSER" -f 'ruby script/server'" is too presumptuous
+     # "pgrep ruby" might return the "Passenger ApplicationSpawner" process
+     # echo ps -u "$u" -o pid,comm,command TO fgrep script/server TO awk '$2 == "ruby" {print $1}'
+     PID_FROM_PROCESS=`ps -u "$u" -o pid,comm,command | fgrep script/server | awk '$2 == "ruby" {print $1}'`
+     return
+     ;;
+  passenger )
+     # The spawn server (q.v. Rails:)
+     PID_FROM_PROCESS=`mypgrep -f -u "$u" "Passenger spawn server"`
+     return
+     ;;   
+  search_server )
+     # The search backend
+     PID_FROM_PROCESS=`ps -ef | grep $u | grep "spell++" | grep -v grep | awk '{print $2}'`
+  ;;
+  go_server )
+     # The GO server
+     PID_FROM_PROCESS=`ps -ef | grep $u | grep "go_server" | grep -v grep | awk '{print $2}'`
+  ;;
+  esac
+}
+
+function writeout {
+  if [ "$ECHO" = echo ] ; then
+    echo "$1 to $2"
+  else
+    verbose writeout "$1" to "$2"
+    echo "$1" > "$2"
+  fi
+}
+
+function status {
+  local p
+  for p in ruby search_server go_server
+  do
+    check $p
+    if [ "$PID" ] ; then
+       echo "$p : $PID"
+    fi
+  done
+  echo
+  ps -w -o user,pid,ppid,comm,command `mypgrep ruby`
+  p=`mypgrep -f Rails:`
+  if [ "$p" ] ; then
+    ps -w -o user=,pid=,ppid=,comm=,command= $p
+  fi
+}
+
+# Syntax: check PROCESS
+# On return:
+#   check="" on agreement and 1 if there is disagreement
+#   PID is the actual PID from the process
+function check {
+  check=
+  local PROCESS="$1"
+  local PID_FROM_PIDS
+  if [ -r $PIDS/$PROCESS ] ; then
+     PID_FROM_PIDS=`head -1 "$PIDS/$PROCESS"`
+  fi
+  PID_FROM_PROCESS $PROCESS
+  PID=$PID_FROM_PROCESS
+  if [ "$PID" = "$PID_FROM_PIDS" ] ; then return ; fi
+  if [ "$PID" ] ; then
+    echo "WARNING: PID for $PROCESS ($PID) differs from PID from pids ($PID_FROM_PIDS)"
+  else
+    echo "WARNING: $THISUSER has no $PROCESS process, but the PID from pids is $PID_FROM_PIDS"
+  fi
+  check=1
+}
+
+# Report any variables that are null and exit if any are null
+function verify_variables {
+  local error=
+  local rc
+  local v
+  for v
+  do
+    eval test -z "$"$v
+    rc=$?
+    if [ $rc = 0 ] ; then
+      echo "$BN: $v has not been set."
+      error=1
+    fi
+  done
+  if [ "$error" ] ; then exit $error ; fi
+}
+
+
+# Syntax: resync PROCESS
+function resync {
+  local PROCESS="$1"
+  local PID_FROM_PIDS
+  if [ -r $PIDS/$PROCESS ] ; then
+     PID_FROM_PIDS=`head -1 "$PIDS/$PROCESS"`
+  fi
+  PID_FROM_PROCESS $PROCESS
+  PID=$PID_FROM_PROCESS
+  if [ "$PID" = "$PID_FROM_PIDS" ] ; then return ; fi
+  if [ "$PID" ] ; then
+     echo $BN: resetting $PIDS/$PROCESS
+     writeout $PID "$PIDS/$PROCESS"
+     return
+  fi
+  echo $BN: removing $PIDS/$PROCESS
+  rm $PIDS/$PROCESS
+}
+
+########### Examine the command-line arguments:
+FILE=
+TEST=
+THISUSER="$USER"
+
+if [ -r $DN/.spellrc ] ; then
+  FILE=$DN/.spellrc
+fi
+
+while [ $# != 0 ]
+do case "$1" in
+      -e ) FILE="$2"
+           shift 2
+           ;;
+      -t ) TEST=1
+           shift
+           ;;
+      -u ) THISUSER="$2"
+           shift 2
+           ;;
+      -v ) VERBOSE=1
+           shift
+           ;;
+       * ) 
+           break
+           ;;
+  esac
+done
+
+if [ "$FILE" ] ; then
+  if [ ! -r "$FILE" ] ; then
+    echo "$BN: file $FILE not found."
+    exit 1
+  fi
+  source "$FILE"
+fi
+
+if [ $# = 0 ] ; then
+  COMMAND=start
+else case "$1" in
+     start | stop | restart | resync | status )
+           COMMAND="$1"
+	   shift
+           ;;
+      *  ) echo "$BN: error - unrecognized command $1"
+           exit 1
+           ;;
+     esac
+fi
+
+if [ $# = 0 ] ; then
+  # Are we in a "Passenger" environment?
+  PID_FROM_PROCESS passenger root
+  if [ "$PID_FROM_PROCESS" ] ; then
+    PROCESSES="search_server go_server passenger"
+  else
+    PROCESSES="search_server go_server ruby"
+  fi
+else
+  PROCESSES=
+  while [ "$1" != "" ] ; do
+    case "$1" in
+      ruby | Passenger | passenger )
+           PROCESSES="$PROCESSES $1"
+           shift
+           ;;
+      search_server | go_server )
+	   PROCESSES="$PROCESSES $1"
+	   shift
+	   ;;
+      SearchServer | searchserver )
+	   PROCESSES="$PROCESSES search_server"
+	   echo "substituting \"search_server\" for obsolete component $1"
+	   shift
+	   ;;
+      GoServer | goserver )
+           PROCESSES="$PROCESSES go_server"
+	   echo "substituting \"go_server\" for obsolete component $1"
+           shift
+           ;;
+      *  ) echo "$BN: error - unrecognized process $1"
+           exit 1
+           ;;
+    esac
+  done
+fi
+
+# If $TEST then we might be able to exit now.
+if [ "$TEST" ] ; then
+  case "$COMMAND" in
+    resync | stop ) exit
+    ;;
+  esac
+fi
+
+
+###### resync
+if [ "$COMMAND" = "resync" ] ; then
+  for p in $PROCESSES
+  do
+    verbose resync "$p"
+    resync "$p"
+  done
+  exit
+fi
+
+###### stop
+if [ "$COMMAND" = "stop" ] ; then
+   for p in $PROCESSES
+   do
+     stop "$p"
+   done
+   exit
+fi
+
+# check we have everything we need
+verify_variables SPELL_HOME SPELL_DATA GENE_ONTOLOGY GENE_ASSOCIATION SEARCH_THREADS
+
+### Preparation for start or restart
+
+CONFIG_TXT=$SPELL_HOME/spell_web/config/config.txt
+
+# The ports used herein are based on those defined in the following file:
+ENV="$SPELL_HOME/spell_web/config/environment.rb"
+
+if [ ! -r "$ENV" ] ; then
+  echo $0: unable to find configuration file: $ENV
+  exit 1
+fi
+
+### Check all is well
+error=
+if [ ! -d "$SPELL_HOME" ] ; then
+  echo "$0: SPELL_HOME not found"
+  error=1
+fi
+
+for f in "$ENV" "$GENE_ASSOCIATION"
+do 
+  if [ ! -r  "$f" ] ; then
+    echo $0: WARNING: $f not found
+    error=1
+  fi
+done
+
+# config.txt is only needed to start search_server
+if [ ! -r "$CONFIG_TXT"  ] ; then
+  echo "$0: WARNING: $CONFIG_TXT not found"
+  if [ "$PROCESSES" != "spell" -o ] ; then exit 1 ; fi
+fi
+
+SPELL_SOCKET_NUMBER=`grep "^ *SPELL_SOCKET_NUMBER" "$ENV" |head -1 | sed 's/.*= *\([0-9]*\) *$/\1/'`
+GO_SOCKET_NUMBER=`grep "^ *GO_SOCKET_NUMBER" "$ENV" |head -1 | sed 's/.*= *\([0-9]*\) *$/\1/'`
+
+# For Passenger, a SPELL_PORT might not be defined:
+SPELL_PORT=`grep '^HOSTNAME' "$ENV" | head -1 | sed -n 's,.*//[^:]*:\([0-9]*\).*$,\1,p'`
+
+if [ -z "$SPELL_PORT" ] ; then
+  SPELL_PORT=3000
+fi
+
+echo "SPELL_PORT=$SPELL_PORT"
+for f in SPELL_SOCKET_NUMBER GO_SOCKET_NUMBER 
+do
+  check=`eval echo '$'$f`
+  echo "$f=$check"
+  if [ -z "$check" ] ; then
+    echo $0: $f not found 
+    error=2
+  fi
+done
+
+if [ "$TEST" -o "$error" ] ; then
+  exit $error
+fi
+
+
+
+### restart
+
+if [ $COMMAND = restart ] ; then
+   for p in $PROCESSES
+   do
+     case "$p" in
+	 passenger | Passenger ) ;;
+	 * ) stop $p
+     esac
+   done
+   start $PROCESSES
+   exit
+elif  [ $COMMAND = status ] ; then
+   status
+   exit
+fi
+
+### start
+maybestart $PROCESSES

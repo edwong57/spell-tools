@@ -1,0 +1,65 @@
+#!/bin/bash
+# peak@princeton.edu 12/2010
+# For help: $0 --help
+
+# Requires: translate
+
+BN=`basename $0`
+DN=`dirname $0`
+
+AUX=auxiliary.dict
+OMIT=
+PREFIX=translated
+
+function help {
+cat <<EOF
+Syntax: $BN [OPTIONS] FILE ...
+
+Translate the specified .pcl files using an auxiliary dictionary.
+
+Unless the --omit line is specified, gene names that are not in the dictionary are left alone.
+
+Options:
+ --dict DICTIONARY : an auxiliary dictionary (default $AUX)
+ --untranslateable : just print untranslateable values, once per encounter, to FILE.untranslateable
+ --prefix PREFIX   : write to PREFIX.FILE (default: $PREFIX)
+EOF
+}
+
+
+
+while [ "$1" ]
+do case "$1" in
+      -h | --help ) help
+           exit
+           ;;
+      --dict ) AUX="$2"
+           shift 2
+           ;;
+      --prefix ) PREFIX="$2"
+           shift 2
+           ;;
+      --untranslateable ) UNTRANSLATEABLE=1
+           shift
+           ;;
+      --omit ) OMIT=--omit
+           shift
+           ;;
+      -* ) echo $BN: unknown option: "$1"
+           exit 1
+           ;;
+      *  ) break
+           ;;
+  esac
+done
+
+
+for file
+do
+ echo $file ...
+ if [ "$UNTRANSLATEABLE" ] ; then
+    cat $file | $DN/translate --dict $AUX --fold --untranslateable --headers 2 | sort -u | tee $file.untranslateable | wc -l
+ else
+    cat $file | $DN/translate $OMIT --dict $AUX --fold --headers 2 > ${PREFIX}.$file
+ fi
+done

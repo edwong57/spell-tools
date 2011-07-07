@@ -1,0 +1,100 @@
+#!/bin/bash
+# peak@princeton.edu 12/2010
+# For help: $0 --help
+
+# Requires: 
+
+BN=`basename $0`
+DN=`dirname $0`
+
+PREFIX=filtered_
+
+function help {
+cat <<EOF
+Syntax: $BN [OPTIONS] file ...
+
+For each specified file, generate \${PREFIX}file based on the selection of genes in the FILTER file, which
+must be specified with the -f option.
+
+WARNING: This script only examines column 1 of the PCL file.
+
+Options:
+ -f FILTER : the file specifying the genes to include (one line per gene).
+ -p PREFIX : the prefix (default: $PREFIX)
+ -v        : verbose
+ --target DIR : the directory into which the filtered file should be written
+
+See also: translate_pcl_files
+
+Note: translate_pcl_files is more general in that it can also perform a translation on the fly.
+
+EOF
+}
+
+while [ "$1" ]
+do case "$1" in
+      -h | --help ) help
+           exit
+           ;;
+      -f ) FILTER="$2"
+           shift 2
+           ;;
+      -p | --prefix) PREFIX="$2"
+           shift 2
+           ;;
+      -v ) VERBOSE=1
+           shift
+           ;;
+      --target ) TARGET="$2"
+           shift 2
+           ;;
+      -* ) echo "$BN: option $1 not recognized"
+           exit 1
+           ;;
+      *  ) break
+           ;;
+  esac
+done
+
+function filter {
+  local IN="$1"
+  local OUT="$2"
+  cat "$IN" | awk "-F\t" -v filter="$FILTER" '
+    BEGIN {
+      TAB="	";
+      while ( getline < filter ) {
+        keep[$1] = 1
+      }
+    }
+    NR <= 2 { print ; next }
+    $1 in keep { print ; next } 
+    # { print "OMITTING: " $0 }
+  ' > "$OUT"
+}
+
+
+if [ -z "$TARGET" -a -z "$PREFIX" ] ; then
+   echo "$BN: a TARGET directory or PREFIX must be specified"
+   exit 1
+fi
+
+if [ -z "$PREFIX" ] ; then
+   THIS=`pwd`
+   if [ "$TARGET" = "."  -o "$TARGET" = "$THIS" -o -z "$TARGET" ] ; then
+     echo "$BN: specify a PREFIX or a different TARGET"
+     exit 1
+   fi
+fi
+
+for f
+do
+  OUT="${PREFIX}$f"
+  if [ "$TARGET" ] ; then
+    OUT="$TARGET/$OUT"
+  fi
+   
+  filter "$f" "$OUT"
+  if [ "$VERBOSE" ] ; then
+    wc -l "$f" "$OUT"
+  fi
+done

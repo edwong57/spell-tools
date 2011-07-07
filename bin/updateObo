@@ -1,0 +1,170 @@
+#!/bin/bash
+# peak@princeton.edu 2010.03.01
+# For help: $0 --help
+
+# Update obo file taking care to stop and start GoServer if this user is its owner
+
+ECHO=echo
+
+PGREP=`which pgrep 2> /dev/null`
+if [ $? = 1 ] ; then 
+  PGREP=
+fi
+
+########## Functions
+
+function help {
+  cat <<EOF
+Syntax: $BN [OPTIONS] 
+
+Update the \$GENE_ONTOLOGY file used by GoServer. If the user executing this script
+is the owner of a running GoServer process, then it is first stopped, and later restarted.
+
+If the "date:" strings of the old and new ontologies are the same, then no update is performed.
+
+If \$GENE_ONTOLOGY is unspecified in the environment, then an attempt to read it from
+the .spellrc file in the directory in which this script resides will be made.
+
+The current GENE_ONTOLOGY file is first renamed by adding its timestamp as a suffix.
+
+Options:
+-e FILE -- source this file  instead of .spellrc if \$GENE_ONTOLOGY is undefined.
+-u USER -- check if the specified user, rather than \$USER, is the owner of a running GoServer.
+-v      -- verbose
+EOF
+
+}
+
+function verbose {
+  if [ "$VERBOSE" ] ; then
+    echo "$@"
+  fi
+}
+
+# Simulate pgrep if need be:
+function mypgrep {
+  if [ "$PGREP" ] ; then
+     pgrep $@
+  else
+     ps -o pid= $@
+  fi
+}
+
+# Syntax: dateInHeader file
+function dateInHeader {
+  # grep is in general faster
+  # sed -n '/^date:/{p;q}' "$1"
+  grep -m 1 '^date:' "$1"
+}
+
+########## Global variables
+
+# To simplify matters look for .spellrc without regard to symbolic links
+REAL=$(readlink "$0" 2> /dev/null)
+if [ -z "$REAL" ] ; then 
+  REAL=$0
+fi
+DN=`dirname "$REAL"`
+BN=`basename "$0"`
+
+if [ "$ECHO" ] ; then
+  echo "$BN: Note: ECHO=$ECHO"
+fi
+
+# Defaults:
+SPELL_SERVER=spell_server
+ADMIN=$DN/$SPELL_SERVER
+FILE=$DN/.spellrc
+VERBOSE=
+
+########## Arguments
+
+looking=1
+while [ $looking = 1 -a $# != 0 ]
+do case "$1" in
+      -h | --help ) help
+           exit
+           ;;
+      -e ) FILE="$2"
+           shift 2
+           ;;
+      -v ) VERBOSE=1
+	   shift
+	   ;;
+       * ) 
+           looking=0
+           ;;
+  esac
+done
+
+########## 
+
+# Do we need to stop GoServer?
+SERVER=`mypgrep -u $USER -f GoServer`
+if [ ! -z "$SERVER" -a ! -r "$ADMIN" ] ; then
+  ADMIN=`which $SPELL_SERVER 2> /dev/null`
+  if [ $? != 0 ] ; then
+    echo $BN: $SPELL_SERVER not found
+    exit 1
+  fi
+fi
+
+if [ -z "$GENE_ONTOLOGY" -a -r "$FILE" ] ; then
+   verbose source $FILE
+   source $FILE
+fi
+
+if [ -z "$GENE_ONTOLOGY" -o ! -r "$GENE_ONTOLOGY" ] ; then
+  echo $BN: gene ontology file not found
+  exit 1
+fi
+
+verbose GENE_ONTOLOGY=$GENE_ONTOLOGY
+
+TMP=/tmp/gene_ontology.obo.$$
+TMP=/tmp/gene_ontology.obo
+
+if [ ! -r $TMP ] ; then
+  verbose wget -O $TMP http://www.geneontology.org/ontology/gene_ontology.obo
+  wget -O $TMP http://www.geneontology.org/ontology/gene_ontology.obo
+fi
+
+rc=$?
+if [ $rc != 0 ] ; then
+  echo $BN: wget failed
+  exit $rc
+fi
+
+DATE=`dateInHeader $TMP`
+
+echo Date string of new gene_ontology file is $DATE
+
+OLDDATE=`dateInHeader "$GENE_ONTOLOGY"`
+
+if [ "$DATE" = "$OLDDATE" ] ; then
+  echo $BN: The date strings of the old and new files are the same.
+  exit
+fi
+
+if [ "$SERVER" ] ; then
+   verbose $ADMIN stop GoServer
+   $ECHO $ADMIN stop GoServer
+fi
+
+DATED=`ls -ld --time-style="+%Y%m%d:%H%M" "$GENE_ONTOLOGY" | awk '{print $6}'`
+verbose DATED=$DATED
+
+$ECHO /bin/mv -f $GENE_ONTOLOGY $GENE_ONTOLOGY.$DATED
+
+rc=$?
+if [ $rc != 0 ] ; then
+  echo $BN: unable to mv -f $GENE_ONTOLOGY $GENE_ONTOLOGY.$DATED
+  exit $rc
+fi
+
+$ECHO /bin/mv -f $TMP $GENE_ONTOLOGY
+
+if [ "$SERVER" ] ; then
+  $ECHO $ADMIN start GoServer
+fi
+
