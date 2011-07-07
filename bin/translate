@@ -4,7 +4,7 @@
 
 # For help: $0 --help
 
-VERSION=0.1
+VERSION=0.1.1
 
 # Revisions:
 #  11/2010
@@ -16,6 +16,7 @@ VERSION=0.1
 #  01/2011: add --key and --nonempty
 #  02/2011: when --key KEYCOLUMN is specified, allow "--column 0"
 #  03/2011: --columns
+#  06/2011: function die; VERSION 0.1.1
 
 # Requires:
 #   /dev/null if a dictionary is not specified
@@ -289,6 +290,11 @@ Version: $VERSION
 EOF
 }
 
+function die {
+    echo "$BN: $@" >&2
+    exit 1
+}
+
 # set global variable: value
 function value {
   value="$1"
@@ -371,18 +377,12 @@ do case "$1" in
        --key | --keycolumn ) KEYCOLUMN="$2"
            shift 2
            ;;
-       -* ) echo "$BN: unrecognized option: $1"
-           exit 1
+       -* ) die "unrecognized option: $1"
            ;;
       *  ) break
            ;;
   esac
 done
-
-function die {
-    echo "$BN: $@" >&2
-    exit 1
-}
 
 if [ "$VERBOSE" ] ; then
   cat <<EOF
@@ -399,8 +399,7 @@ if [ ! -z $N2 ] ; then echo "N2=$N2" ; fi
 fi
 
 if [ -z "$DICT" -o ! -r "$DICT" ] ; then
-  echo "$BN: dictionary $DICT not found"
-  exit 1
+  die "dictionary $DICT not found"
 fi
 
 awk "-F$IFS" -v dict="$DICT" -v from="$FROM" -v to="$TO" -v dfs="$DFS" \
