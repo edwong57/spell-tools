@@ -1,0 +1,140 @@
+#!/bin/sh
+# peak@princeton.edu 12/2010
+# For help: $0 --help
+
+# Revisions: 
+# 01/2011:
+#  source .spellrc
+#  options: --exclude, --omit, --temp
+
+BN=`basename $0`
+DN=`dirname $0`
+
+TAB="	"
+IN_FILE=SGD_features.tab
+
+function help {
+cat <<EOF
+Syntax: $BN [OPTIONS]
+
+Generate the SYSTEMATIC_TO_DISPLAY_FILE for SPELL
+
+If --omit is specified, then the generated file contains only the
+systematic names actually used in the .pcl files in
+$SPELL_DATA/expression and STD
+
+This script sources .spellrc as described in spell_prepare.
+
+Options:
+ -i IN      :: input file (specify - for stdin); default is STD/$IN_FILE
+ -v | --verbose :: verbose
+ --exclude  :: exclude 'not physically mapped' entries
+ --omit     :: see above; this option also creates the file: STD/pcl_genes.txt
+ --temp STD :: provide the directory name to be used for temporary data as described in spell_prepare
+EOF
+}
+
+function establish_SPELL_environment {
+# Global: STD BN and whatever is in .spellrc
+  # Attempt to source .spellrc
+  for dir in ~ "$DN"
+  do
+    if [ -r "$dir/.spellrc" ] ; then 
+      . "$dir/.spellrc"
+      break
+    fi
+  done
+
+  if [ -z "$SPELL_TEMP_DATA" ] ; then
+    STD=`pwd`
+  elif [ ! -d "$SPELL_TEMP_DATA" ] ; then
+    echo "$BN: SPELL_TEMP_DATA=$SPELL_TEMP_DATA does not exist."
+    exit 1
+  else 
+    STD="$SPELL_TEMP_DATA"
+  fi
+}
+
+establish_SPELL_environment  # before checking options
+
+while [ "$1" ]
+do case "$1" in
+      -h | --help ) help
+           exit
+           ;;
+      -i ) IN="$2"
+           shift 2
+           ;;
+      -v | --verbose ) VERBOSE=1
+           shift 
+           ;;
+      --exclude ) EXCLUDE='not physically mapped'
+           shift
+           ;;
+      --omit ) OMIT="--omit"
+           shift
+           ;;
+      --temp | --spell_temp_data ) STD="$2"
+           if [ ! -d "$STD" ] ; then
+             echo "$BN: specified directory $STD does not exist"
+             exit 1 
+           fi
+           shift 2
+           ;;
+      -* ) echo "$BN: invalid option: $2"
+           exit 1
+           ;;
+      *  ) break
+           ;;
+  esac
+done
+
+function verbose {
+  if [ "$VERBOSE" ] ; then
+    echo "$1"
+  fi
+}
+
+# Write on stdout the basic SYSTEMATIC_TO_DISPLAY_FILE
+# Global: TAB EXCLUDE IN
+function go {
+  awk "-F$TAB" -v feature=4 -v symbolic=5 -v alias=6 -v exclude="$EXCLUDE" '
+    exclude != "" && $2 == exclude { next }
+    $feature != "" { 
+      if ($symbolic == "") { print $feature FS $feature } 
+      else { print $feature FS $symbolic }
+    } ' "$IN" | sort -t "$TAB" -k1,1 -k2,2 | uniq
+}
+
+# Global: STD SPELL_DATA
+function generate_pcl_genes {
+  local f dir
+  /bin/rm "$STD/pcl_genes.txt"
+  for dir in "$SPELL_DATA/expression" "$STD"
+  do
+    for f in $dir/*.pcl
+    do
+      tail -n +3 "$f" | cut -f 1 >> "$STD/pcl_genes.txt"
+    done
+  done
+  sort -u -o "$STD/pcl_genes.txt" "$STD/pcl_genes.txt"
+}
+
+###########################
+
+if [ -z "$IN" ] ; then
+  IN="$STD/$IN_FILE"
+fi
+
+verbose "STD=$STD"
+verbose "IN=$IN"
+
+go > "$STD/SYSTEMATIC_TO_DISPLAY_FILE"
+
+if [ "$OMIT" ] ; then
+  generate_pcl_genes
+  /bin/mv "$STD/SYSTEMATIC_TO_DISPLAY_FILE"  "$STD/SYSTEMATIC_TO_DISPLAY_FILE.tmp"
+  cat "$STD/SYSTEMATIC_TO_DISPLAY_FILE.tmp" |\
+    translate --dict "$STD/pcl_genes.txt" --from 1 --to 1 --omit  > "$STD/SYSTEMATIC_TO_DISPLAY_FILE"
+  /bin/rm "$STD/SYSTEMATIC_TO_DISPLAY_FILE.tmp"
+fi

@@ -1,0 +1,90 @@
+#!/bin/sh
+# peak@princeton.edu 12/2010
+# For help: $0 --help
+
+# Revisions: 
+# 01/2011: exclude 'not physically mapped' entries
+
+BN=`basename $0`
+DN=`dirname $0`
+
+IN=SGD_features.tab
+
+function help {
+cat <<EOF
+Syntax: $BN [OPTIONS]
+
+Generate a dictionary of "alias TAB FN" pairs
+where FN is the "feature name" specified in the INPUT file.
+
+INPUT format:
+# 4 : FN feature name e.g. YAL060W
+# 5 : SN symbolic name e.g. BDH2
+# 6 : alias|alias|...
+
+INPUT defaults to $IN but may be specified as - for stdin.
+
+
+OUTPUT: stdout
+
+For each line in INPUT that has a "feature name" (FN),
+a sequence of pairs "alias TAB FN" is written to stdout, 
+including "FN FN" and "SN FN".
+
+Unless --basic is specified, the uppercase of FN and SN are
+also included as aliases.
+
+Options:
+ -i IN   :: input file (specify - for stdin)
+ --basic :: do not create additional aliases by uppercasing.
+ --exclude  :: exclude 'not physically mapped' entries
+
+EOF
+}
+
+TAB="	"
+
+while [ "$1" ]
+do case "$1" in
+      -h | --help ) help
+           exit
+           ;;
+      --basic ) BASIC=1
+           shift
+           ;;
+      --exclude ) EXCLUDE='not physically mapped'
+           shift
+           ;;
+      -i ) IN="$2"
+           shift 2
+           ;;
+      -* ) echo "$BN: invalid option: $2"
+           exit 1
+           ;;
+      *  ) break
+           ;;
+  esac
+done
+
+
+awk "-F$TAB" -v feature=4 -v symbolic=5 -v alias=6 -v basic="$BASIC" -v exclude="$EXCLUDE" '
+ exclude != "" && $2 == exclude { next }
+ $feature != "" {
+    print $feature FS $feature
+    if (!basic) {
+      upper = toupper($feature);
+      if (upper != $feature){ print upper FS $feature }
+    }
+    if ( $symbolic != "") { print $symbolic FS  $feature }
+    if ( $alias != "") { 
+      n=split($alias, a, /\|/);  
+      for (i=1; i<=n; i++) { 
+        print a[i] FS $feature;
+        # Let toupper(a[i]) be an alias as well:
+	if (!basic) {
+          upper = toupper(a[i])
+          if (upper != a[i]) { print upper FS $feature }
+        }
+      }
+    }
+ } ' "$IN" | sort -t "$TAB" -k1,1 -k2,2 | uniq
