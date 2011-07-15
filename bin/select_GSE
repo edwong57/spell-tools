@@ -6,9 +6,10 @@
 
 # For help: $0 --help
 
-VERSION=0.0.8
+VERSION=0.0.9
 
 # 0.0.8: Compatibility with Mac OSX
+# 0.0.9: Use ^SAMPLE instead of Series_sample_id
 
 BN=`basename $0`
 # In case script is called using source: 
@@ -70,7 +71,7 @@ Options specifying selection criteria:
                           year and month); YEAR should be a four-digit
                           year, and MO should be a two-digit month
                           (see example below).
-  --minimum N          :: minimum number of samples (Series_sample_ids)
+  --minimum N          :: minimum number of samples (^SAMPLE)
   --by-array           :: equivalent to: --series-type "Expression profiling by array"
   --series-type TYPE   :: retain only those GSE records of the specified series type (see below)
   --series-types FILE  :: retain only those GSE records with a series type equal to one of the
@@ -325,7 +326,7 @@ function select-by-minimum {
   while read file
   do
     set-GREP
-    N=$($GREP '^!Series_sample_id' "$file" | sort -u | wc -l)
+    N=$($GREP '^^SAMPLE' "$file" | sort -u | wc -l)
     if [ $N -ge $MINIMUM ] ; then
       echo "$file"
     fi
