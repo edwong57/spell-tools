@@ -1,0 +1,463 @@
+#!/bin/bash
+
+# IN PROGRESS
+
+# Copyright (C) 2011 peak@princeton.edu
+# License: Creative Commons Attribution-NonCommerical-ShareAlike 3.0 Unported (CC BY-NC-SA 3.0)
+# See http://creativecommons.org/licenses/by-nc/3.0/
+# Attribution shall include the copyright notice above.
+
+# peak@princeton.edu 2011
+# For help: $0 --help
+
+VERSION=0.0.11
+
+# Requires: ln
+
+# History:
+# 0.1.11:  + --resume; use stat portably; fix handling of symlink
+
+BN=`basename $0`
+
+VERBOSITY=0
+prefix=xx
+
+# Minimum number of samples:
+MINIMUM=1
+
+# Portability stuff:
+if [ -x /bin/ln ] ; then BINLINK=/bin/ln ; else BINLINK=ln ; fi
+
+case `uname` in
+  Darwin ) STATOPT=-f       ;;
+  *      ) STATOPT=--format ;;
+esac
+
+function help {
+cat <<EOF
+Syntax: $BN --out DIR FILE ...
+
+This script examines the platforms and samples in each specified GSE
+family.soft file, with a view to splitting it as required into
+single-platform family.soft files in the output directory, OUT.
+
+Specifically, if all the samples in the input file are on the same
+platform and if there are sufficiently many relevant samples (as
+determined by the --winnow and --minimum options), this script will
+attempt to move the file to the output directory (or create a link to
+the file from the output directory if one of the linking options is
+specified); otherwise:
+
+   1) the file is split into single-platform family.soft files;
+   2) if any of the resulting files has insufficiently many
+      qualified samples, it is removed;
+
+If the "--winnow TAXID" option is specified, then samples for
+organisms that do not reference the specified TAXID are omitted.
+
+If the input file named {PREFIX}_family.soft is split, the split files
+have names of the form {PREFIX}{PLATFORM}_family.soft where PLATFORM
+is the GPL id, that is, it has the form GPL{number}.
+
+If the output directory is selected so that initially there are no GSE
+files in it, then on completion, all the GSE files in it will satisfy
+the selection criteria.  For this reason, it is recommended that the
+output directory be selected so that initially it does not contain
+any of the input files.
+
+WARNING: Currently the ^SERIES section of each output file is just a
+         copy of the ^SERIES section of the input.
+
+Options:
+  --hardlink     :: rather than moving the input file, create a hard link
+  --softlink     :: rather than moving the input file, create a symbolic link
+  --resume       :: ignore FILE if DIR already contains a file indicating
+                    FILE has already been processed.
+
+  --out     DIR  :: directory for output directory (no default)
+  --minimum MIN  :: the minimum number of relevant per-platform samples
+                    (default 1).
+                    If the input file has only one platform, then it
+                    will only be moved (or linked) if it has at least
+                    MIN relevant samples; otherwise, split files with
+                    fewer than MIN relevant samples will be deleted.
+  --winnow TAXID :: include only samples in which there is a "Sample
+                    taxid" line specifying TAXID, where TAXID may
+                    either be the numerical NCBI taxid, or one of the
+                    following mnemonics: sce :: 4932 
+
+Assumptions:
+
+It is assumed that the input GSE file is organized into sections as follows:
+
+^DATABASE
+^SERIES
+^PLATFORM 
+...
+^SAMPLE
+...
+
+(This assumption has been verified for a very large collection of GSE files in existence as of June 2011.)
+
+Examples:
+
+$ $BN --out sce GSE10079_family.soft
+
+produces two files in the sce directory:
+  GSE10079GPL2529_family.soft
+  GSE10079GPL6179_family.soft
+
+$ $BN --out sce --winnow sce GSE10079_family.soft
+produces the message:
+The file GSE10079_family.soft does not have sufficiently many relevant samples
+
+$ $BN --out sce -v --hardlink --winnow sce GSE*soft.gz
+
+Notes:
+ * If FILE has the .gz suffix, the file will be unzipped in the same
+   directory (leaving the original file in place) except that if the unzipped
+   version seems to exist, it will be used.
+ * The date and a copy of the command line is appended to {DIR}/.$BN.log
+
+Version: $BN $VERSION
+
+See source for copyright and licensing details.
+EOF
+}
+
+args=("$@")
+
+while [ "$1" ]
+do case "$1" in
+      -h | --help ) help
+           exit
+           ;;
+      -v | --verbose ) VERBOSE=1
+	   VERBOSITY=1
+           shift
+           ;;
+      --resume ) RESUME=1
+	   shift
+	   ;;
+      --hardlink ) LINK=$BINLINK
+           shift
+           ;;
+      --softlink | --symlink ) LINK="$BINLINK -s"
+           shift
+           ;;
+      --out ) DIR="$2"
+           shift 2
+           ;;
+      --verbosity ) VERBOSITY="$2"
+	   if [ "$VERBOSITY" -gt 0 ] ; then VERBOSE=1 ; fi
+           shift 2
+           ;;
+      -V | --version ) echo $BN version $VERSION
+           exit
+           ;;
+      --minimum ) MINIMUM="$2"
+           shift 2
+           ;;
+      --winnow ) case "$2" in
+	    sce     ) TAXID=4932     ;;
+	    [0-9]*  ) TAXID="$1" ;;
+            *       )
+              die invalid TAXID specified with --winnow option
+	      ;;
+           esac
+           shift 2
+           ;;
+      -* ) echo "$BN: unknown option $1"
+           exit 1
+           ;;
+      *  ) break
+           ;;
+  esac
+done
+
+function die {
+    echo "$BN: $@" >&2
+    exit 1
+}
+
+function verbose {
+  if [ "$VERBOSE" ] ; then
+    echo "$@"
+  fi
+}
+
+# Syntax: vverbose LEVEL text ...
+# Global: VERBOSITY
+function vverbose {
+  local vv="$1"
+  shift
+  if [ "$VERBOSITY" -ge "$vv"  ] ; then
+    echo "$@"
+  fi
+}
+
+# ask $@ and get a non-blank RESPONSE
+function ask {
+   RESPONSE=
+   while [ -z "$RESPONSE" ] ; do
+     read -p "$@" RESPONSE
+   done
+}
+
+
+function execute {
+  verbose "$@"
+  "$@"  
+}
+
+function pad {
+ case ${#1} in
+        1 ) echo "000$1" ;;
+        2 ) echo "00$1" ;;
+        3 ) echo "0$1" ;;
+        4 ) echo "$1" ;;
+ esac
+}
+
+# Global NPLATFORMS NSAMPLES
+function splitup {
+  # --quiet and {*} are not supported on Mac OSX
+  # idiosyncracy of csplit requires decrementing by 1:
+  local i=$(( NPLATFORMS - 1 )) 
+  local j=$(( NSAMPLES - 1 ))
+  csplit -s -n 4 "$1" "/^^SERIES/" "/^^PLATFORM/" "{${i}}" "/^^SAMPLE/" "{${j}}"
+}
+
+# Syntax: prepare_file PLATFORM
+# Set OUT and if necessary initialize it
+# Global: gse prefix OUT SAMPLES
+function prepare_file {
+    local platform="$1"
+    local i=${platform/GPL}
+    # KEEP THIS PATTERN IN SYNC WITH maybe-remove-all-platform-specific-files
+    OUT="$DIR/${gse/_family/}${platform}_family.soft"
+    if [ -z "${SAMPLES[$i]}" ] ; then
+      vverbose 2  preparing "$OUT"
+      cat ${prefix}0000 > "$OUT"
+      cat ${prefix}0001 >> "$OUT"
+      SAMPLES[$i]=0
+    fi
+}
+
+# If the target minimum number of samples has not been for a platform,
+# then remove the corresponing platform.
+# Set REMOVED to be the number of platform-specific files that are
+# removed by this function.
+# Global: PLATFORMS SAMPLES MINIMUM OUT REMOVED
+function maybe-remove-platform {
+  local i platform
+  REMOVED=0
+  if [ -n "$MINIMUM" ] ; then
+      vverbose 2  MINIMUM=$MINIMUM
+      for platform in "${PLATFORMS[@]}" ; do
+	i=${platform/GPL}
+	verbose Number of relevant samples in platform $i is ${SAMPLES[$i]}
+	if [ ${SAMPLES[$i]} -lt $MINIMUM ] ; then
+	    prepare_file "$platform"  # i.e. set $OUT
+            verbose "removing $OUT as ${SAMPLES[$i]} -lt $MINIMUM"
+	    /bin/rm "$OUT"
+	    (( REMOVED += 1 ))
+	    SAMPLES[$i]=
+        fi
+      done
+  fi
+}
+
+# Has anything been accomplished?  If all the samples are in a single platform,
+# then remove all the platform-specific files and set REMOVED=1
+# Global: PLATFORMS SAMPLES NSAMPLES REMOVED gse
+function maybe-remove-all-platform-specific-files {
+  local i platform
+  REMOVED=0
+  for platform in "${PLATFORMS[@]}" ; do
+     i=${platform/GPL}
+     if [ "${SAMPLES[$i]}" = "$NSAMPLES" ] ; then
+       verbose "All the samples are in platform $platform ... removing all the platform-specific files"
+       # KEEP THIS PATTERN IN SYNC WITH prepare_file
+       /bin/rm "$DIR/${gse/_family/}GPL"[0-9]*_family.soft
+       REMOVED=1
+       break
+     fi
+  done
+}
+
+# ln, or ln -s, or mv
+# Global: BN LINK BINLINK
+function link-or-move {
+    if [ -n "$LINK" ] ; then
+     vverbose 2  "$BN: $LINK $1 $2"
+     $LINK "$1" "$2"
+     if [ $? = 0 -o "$LINK" = "$BINLINK -s" ] ; then return ; fi
+     verbose Attempting to create a symbolic link:
+     $BINLINK -s "$1" "$2"
+    else
+     /bin/mv "$1" "$2"
+    fi
+}
+
+# Syntax: move-or-explain SOURCE TARGET explanation ....
+# If CHECK = 1 then just echo the explanation
+# Global: CHECK
+
+function move-or-explain {
+   local src="$1"
+   local tgt="$2"
+   shift 2
+   if [ "$CHECK" = 1 ] ; then
+     echo "$@"
+   else
+     link-or-move "$src" "$tgt"
+   fi
+}
+
+TMP=/tmp/$USER
+mkdir -p "$TMP" 
+if [ $? != 0 ] ; then echo "$BN: unable to mkdir $TMP" ; exit 1 ; fi
+
+if [ -z "$DIR" ] ; then
+   die No output directory was specified.
+else
+   mkdir -p "$DIR" || die "mkdir -p $DIR returned $?"
+fi
+
+(date ; echo "$0 ${args[@]}" ; echo "") >> $DIR/.$BN.log
+
+############ FOR EACH FILE
+
+for file
+do
+  f="$file"
+  g=${f/.gz/}
+  if [ "$f" = "$g" ]; then
+    if [ ! -r "$f" ] ; then
+      echo "$file :: not found"
+      continue
+    fi
+  elif [ -r "$f" ] ; then
+    if [ -r "$g" ] ; then
+      verbose reading $g as it already exists
+    else
+      gunzip -c "$f" > "$g"
+    fi
+    f="$g"
+  fi
+
+  bname=$(basename "$f")
+  dn=$(cd $(dirname "$f"); pwd)
+
+# verify that $g == $dn/$bname
+  if [ "$VERBOSE" ] ; then
+    x=$(stat $STATOPT "%i" "$g" "$dn/$bname" | uniq | wc -l)
+    if [ $x != 1 ] ; then
+       echo $BN: INTERNAL ERROR: $g vs $dn/$bname
+       exit 1
+    fi
+  fi
+
+  gse="${bname/_*/}"
+
+  echo "$f ::"
+
+  if [ "$RESUME" = 1 ] ; then
+    if [ -r "$DIR/$bname" ] ; then
+      RESUME=2
+    else
+      ls "$DIR/${gse}GPL"*.soft 2> /dev/null > /dev/null
+      if [ $? = 0 ] ; then RESUME=2 ; fi
+    fi
+    if [ $RESUME = 2 ] ; then
+       RESUME=1
+       verbose "$BN: resumption mode: skipping $f"
+       continue
+    fi
+  fi
+
+  # SAMPLES[platform] is the number of GSM in the platform specified as an integer
+  unset SAMPLES
+
+  # If CHECK=1 then we will NOT be able to "mv $dn $DIR"
+  CHECK=$(stat $STATOPT "%i" "$dn" "$DIR" | uniq | wc -l)
+
+  # vverbose 2  dn=$dn
+  vverbose 2  gse=$gse
+
+  NSAMPLES=$(grep -c '^^SAMPLE' "$f")
+  PLATFORMS=($(grep '^^PLATFORM' "$f" | sed 's/[^=]*= *//' ))
+  NPLATFORMS=${#PLATFORMS[@]}
+  # USEDPLATFORMS=$(grep '^!Series_platform_id' "$f" | uniq | wc -l)
+
+  verbose PLATFORMS=${PLATFORMS[@]}
+  verbose NPLATFORMS=$NPLATFORMS
+  verbose NSAMPLES=$NSAMPLES
+  verbose TAXID=$TAXID
+
+  if [ "$NPLATFORMS" -lt 1 ] ; then
+    verbose Ignoring $f as it has no platforms
+    continue
+  elif [ "$NPLATFORMS" = 0 -a -z "$TAXID" ] ; then
+    if [ "$NSAMPLES" -ge $MINIMUM ] ; then
+      verbose "NOTE: $f is single-platform and meets the relevance criteria"
+      move-or-explain "$f" "$DIR" "NOTE: $f is single-platform and meets the relevance criteria but cannot be moved to $DIR"
+      continue
+    fi
+  fi
+
+  splitup "$f"
+  if [ $? != 0 ] ; then
+     echo $BN: ERROR: split failed ... so skipping $gse
+     continue
+  fi
+
+  # xx0000 header
+  # xx0001 series
+  # xx0002 ... xx(1+NPLATFORMS)
+  # xx(1+NPLATFORMS+1) .. xx(1+NPLATFORMS+NSAMPLES)
+  for ((i=0; i < NPLATFORMS ; i++)) ; do
+      j=$(pad $(( i + 2 )) )
+      platform=$(grep -m 1 '^^PLATFORM' "${prefix}$j" | sed -e 's/.*= *//' -e  's/ *$//' )
+      prepare_file "$platform"
+      vverbose 2 "cat ${prefix}$j TO $OUT"
+      cat ${prefix}$j >> "$OUT"
+    done
+ 
+    for ((i=0; i< NSAMPLES ; i++)) ; do
+      j=$(pad $(( i + 2 + NPLATFORMS )) )
+      platform=$(grep -m 1 '^!Sample_platform_id'  "${prefix}$j" | sed -e 's/.*= *//' -e 's/ //g' )
+      if [ -z "$platform" ]; then
+        echo ERROR: Skipping sample $i in $gse as it has no Sample_platform_id
+	continue
+      fi
+      go=
+      if [ -z "$TAXID" ] ; then
+	  go=1
+      else
+        grep '^!Sample_taxid' ${prefix}$j | grep -q '= *'"$TAXID"' *$'
+	if [ $? = 0 ] ; then go=1 ; fi
+      fi
+      if [ -z "$go" ] ; then
+	  verbose skipping $(head -1 ${prefix}$j | sed 's/.//')
+      else
+	  prepare_file "$platform"  # i.e. set $OUT
+          #verbose "sample $i..."
+          #verbose "cat ${prefix}$j TO $OUT"
+          cat ${prefix}$j >> "$OUT"
+	  ((SAMPLES[${platform/GPL}] ++ ))
+      fi
+  done
+
+  maybe-remove-platform  # sets REMOVED
+  if [ "$REMOVED" = "$NPLATFORMS" ] ; then
+    echo "The file $f does not have sufficiently many relevant samples"
+  else
+    maybe-remove-all-platform-specific-files  # sets REMOVED
+    if [ "$REMOVED" = 1 ] ; then
+	move-or-explain "$dn/$bname" "$DIR" "NOTE: all platform-specific files have been removed for $gse but unable to mv $f $DIR"
+    fi
+  fi
+
+done  # outer loop
