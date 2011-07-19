@@ -7,6 +7,7 @@
 # This is the Troilkatt version as of May 27, 2011 with changes by peak@princeton.edu including:
 #  - modifications to allow use with UTF-8 input using either Ruby 1.8 or 1.9
 #  - map=PATHNAME as alternative to "organism file"
+#  - support GSEnnnGPLmmm
 
 require 'set'
 
@@ -25,7 +26,7 @@ if ARGV.length < 3
 Syntax: #{BN} [-v | --verbose] ARGS
 ARGS:
    0 - input pcl filename, the period-delimited prefix of which is used to find a match in the info file (see below)
-   1 - info file (aka configuration file - often GSEnnn.info or allInfo.txt)
+   1 - info file (aka configuration file - often GSEnnn.info or GSEnnnGPLmmm.info or allInfo.txt)
    2 - the pathname of the organism file, or "map=" followed immediately by the pathname of the map file (see below)
    3 - output file
 
@@ -34,16 +35,18 @@ Options:
 
 This script creates a new pcl file by copying the input pcl file after mapping the gene names in it to standard symbols.
 
-The period-delimited prefix of the pcl filename is used to find a match in the info file based on the DatasetID field.
-The pcl filename is normally prefixed with "GDSID." or "GDSID_SETID." where GDSID is the GEO id, for example "GSE217.",
-and "SETID" is a character string that does not contain a period.
+The period-delimited prefix of the pcl filename is used to find a match in the info file based on the DatasetID or File fields.
 
-If specified, the organism file should consist of rows of the form
+The pcl filename normally has a period-delimited prefix of the form GDS{id} or GDS{id}GPL{pid} or GDS{id}_{setid} where:
+    {id} and {pid} are integers, and
+    {setid} is a character string that does not contain a period.
+
+If specified, the organism file should consist of rows of the form:
 
 ORGANISM<tab>PATHNAME
 
 where:
-   ORGANISM is the organism name (e.g. 'Saccharomyces cerevisiae') as it appears in the .info file for this GDSID
+   ORGANISM is the organism name (e.g. 'Saccharomyces cerevisiae') as it appears in the .info file for this GDS id.
    PATHNAME is the pathname of the alias map file for ORGANISM
 
 The alias map file should consist of rows of the form:
@@ -52,12 +55,12 @@ The alias map file should consist of rows of the form:
 where G is a gene name and the S are the corresponding standard symbols.
 (Each input row for G results in n output rows.)
 
-The .info file is consulted for the value of ORGANISM for this GDSID.
+The .info file is consulted for the value of ORGANISM for this GDS id.
 
 Example:
   #{BN} GSE13219.knn.pcl GSE13219.sfp.info map=sce.map
 
-Version: 2011.06.15
+Version: 2011.07.18
 
 EOH
 
@@ -74,6 +77,7 @@ end
 
 ### VARIABLES
 #Important configuration column indices (IO=0):
+FILE_col = 0
 GDSID_col = 1
 org_col = 2
 
@@ -105,8 +109,10 @@ fd.each_line do |line|
 	line.chomp!
         # verbose(line)
 	parts = line.split("\t")
-	if parts[GDSID_col] == GDSID
-		org = parts[org_col]
+        next if parts[0] == "File"
+	if parts[GDSID_col] == GDSID or parts[FILE_col].split("_")[0] == GDSID
+          org = parts[org_col]
+          break
 	end
 end
 
