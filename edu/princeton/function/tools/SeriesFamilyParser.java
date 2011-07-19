@@ -394,13 +394,20 @@ public class SeriesFamilyParser {
 						sampValueIdxs.put( sampPlatform.get(sampID), expressionValueCol);
 					}
 					if (sampIdIdxs.get(sampPlatform.get(sampID)) != null) {
-						String[] parts = line.split("\t");						
+						String val = "";
+						String[] parts = line.split("\t");
 						int valIndex = sampValueIdxs.get(sampPlatform.get(sampID));
-						if (parts.length <= valIndex) {
-							System.err.println("Invalid line: " + line);
-							continue;
+
+						//peak: a terminating tab indicates a missing value, but java ignores it, so:
+
+						if (valIndex < parts.length) {
+						    val = parts[valIndex];
+						} else if (valIndex == parts.length && line.endsWith("\t") ) {
+						    val = "";
+						} else {
+						    System.err.println("Invalid line: " + line);
+						    continue;
 						}
-						String val = parts[valIndex];
 
 						if (val.equals("")) {
 							missingValueCount += 1;
