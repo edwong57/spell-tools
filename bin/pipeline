@@ -13,7 +13,7 @@
 # peak@princeton.edu 2011
 # For help: $0 --help
 
-VERSION=0.1.11
+VERSION=0.1.12
 
 # 0.1.4 - tested on Mac OSX; sometimes redirect stderr to .err file; --skip based on final.pcl
 # 0.1.5 - --resume
@@ -23,6 +23,7 @@ VERSION=0.1.11
 # 0.1.9 - gse=GSEnnn or GSEnnn_setABC
 # 0.1.10 - package edu.princeton.function.tools;
 # 0.1.11 - --sfp option
+# 0.1.12  tweaks
 
 # Requires the following:
 #  java, javac
@@ -284,6 +285,7 @@ function verbose {
 # Syntax: safecd DIR [MESSAGE]
 function safecd {
   local rc message
+  verbose cd "$1"
   cd "$1"
   if [ $? = 0 ] ; then return ; fi
   rc=$?
@@ -366,7 +368,9 @@ function MissingValues {
   #           MissingValues input    info     output max_mv_per_gene(%) 
   #                                             min_required_samples
   #                                               max_allowed_in_dataset(%)
-  $JAVA $JPKG.MissingValues $pcl $id.info $id.mv.pcl  50 3 50
+  local command="$JAVA $JPKG.MissingValues $pcl $id.info $id.mv.pcl  50 3 50"
+  verbose "$command"
+  $command
   # ... per Lars's SPELL Data Processing Pipeline documentation.
 }
 
@@ -622,8 +626,10 @@ do
   maybe-skip
 
   if [ -z "$QDAB" ] ; then
-     verbose ... $gse.final.pcl done
-     maybe-remove
+     if [ -r "$gse.final.pcl" ] ; then
+       verbose ... $gse.final.pcl done
+       maybe-remove
+     fi
      continue
   fi
 

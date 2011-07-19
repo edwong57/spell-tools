@@ -1,5 +1,6 @@
 /**
  * This version was in sync with SVN troilkatt repository (svn://gen-svn.princeton.edu/hefalmp) as of 2011.05.27
+ * 20110718 - revised by //peak to support GSEnnnGPLmmm files by using the _-delimited prefix of cols[iFile]
  */
 
 package edu.princeton.function.tools;
@@ -69,11 +70,14 @@ public class MissingValues {
 	 * @param return dataset ID
 	 */
 	public String getId(String inputFilename) {
+		return getId(inputFilename, "\\.");
+ 	}
+
+	public String getId(String inputFilename, String delim ) {
 		String basename = new File(inputFilename).getName();
-		return basename.split("\\.")[0];
+		return basename.split(delim)[0];
 	}
-	
-	
+
 	/**
 	 * Parse the info file to initialize global variables: numberOfChannels, zeroAsmissingValues,
 	 * and missingValueCutoff
@@ -85,6 +89,7 @@ public class MissingValues {
 	 */
 	public boolean parseInfoFile(String infoFilename, String id) throws IOException {
 		// Important configuration columns
+ 	        int iFile = 0;
 		int iDCol = 1;		
 		int zeroMVCol = 22;
 		int mvCutoffCol = 23;
@@ -96,7 +101,8 @@ public class MissingValues {
 		boolean entryFound = false;
 		while ((line = ib.readLine()) != null) {
 			String[] cols = line.trim().split("\t");
-			if (cols[iDCol].equals(id)) {				
+			//peak - also use the _-delimited prefix of cols[iFile]
+			if (cols[iDCol].equals(id) || getId(cols[iFile], "_").equals(id) ) {				
 				entryFound = true;				
 				if (Integer.valueOf(cols[zeroMVCol]) == 0) {
 					zerosAsMissingValues = false;
