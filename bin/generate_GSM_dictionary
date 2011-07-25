@@ -1,0 +1,248 @@
+#!/bin/bash
+# Copyright (C) 2011 peak@princeton.edu
+# License: Creative Commons Attribution-NonCommerical-ShareAlike 3.0 Unported (CC BY-NC-SA 3.0)
+# See http://creativecommons.org/licenses/by-nc/3.0/
+# Attribution shall include the copyright notice above.
+
+# peak@princeton.edu 2011
+# For help: $0 --help
+
+VERSION=0.1.1
+
+# Requires: 
+
+BN=$(basename "$0")
+DN=$(cd $(dirname "$0"); pwd)
+
+TMP=/tmp/$USER
+
+function help {
+cat <<EOF
+Syntax: $BN [OPTIONS] FILE ...
+
+Produce a dictionary with entries of the form:
+
+SAMPLE<tab>sample title
+
+e.g.
+
+GSM253167	Yeast aging 1 generation microarray 2 (dye inversion)
+
+
+Each specified FILE should be a family.soft file or a gzipped family.soft file.
+
+If both FILE and FILE.gz are presented, only the first file presented will be processed.
+
+Options:
+
+--append OUT :: pathname of file into which the dictionary entries are to be appended
+                After adding entries, the entire file is sorted.
+-v :: verbose
+-V :: version
+
+See source for copyright and licensing details.
+
+Version: $BN $VERSION
+EOF
+}
+
+while [ "$1" ]
+do case "$1" in
+      -h | --help ) help
+           exit
+           ;;
+      -v | --verbose ) VERBOSE=1
+           shift
+           ;;
+      -V | --version ) echo $BN version $VERSION
+           exit
+           ;;
+      --append ) OUT="$2"
+	   shift 2
+           ;;
+      -* ) echo "$BN: unknown option $1"
+           exit 1
+           ;;
+      *  ) break
+           ;;
+  esac
+done
+
+function die {
+    echo "$BN: $@" >&2
+    exit 1
+}
+
+function continuep {
+   local PROMPT="$1"
+   if [ -z "$1" ] ; then
+      PROMPT="Continue? [yN]"
+   fi
+   read -p "$PROMPT " x
+   case "$x" in
+     y | Y | yes | YES ) return
+     ;;
+   esac
+   exit
+}
+
+function verbose {
+  if [ "$VERBOSE" ] ; then
+    echo "$@"
+  fi
+}
+
+# Syntax: safecd DIR [MESSAGE]
+function safecd {
+  local rc message
+  cd "$1"
+  if [ $? = 0 ] ; then return ; fi
+  rc=$?
+  if [ -n "$2" ] ; then
+    message="unable to cd $1; exiting ..."
+  else
+    message="$2"
+  fi
+  echo "$BN: $message"
+  exit $rc
+}
+
+# Set the global variable: value
+function value {
+  value="$1"
+  case "$value" in space ) value=" " ;; tab ) value="	" ;; esac
+}
+
+# Usage: ask PROMPT
+# Example: if ask "Are you well?" ; then ....
+# Global: INTERACT
+# If INTERACT, then ask the user and if the user says yes, then run true; otherwise run false
+function ask {
+  local x
+  if [ -n "$INTERACT" ] ; then 
+      read -p "$1 " x
+      case "$x" in
+	  y | yes | Y | YES ) true
+	      return
+	      ;;
+      esac
+  fi
+  false
+}
+
+function execute {
+  verbose "$@"
+  "$@"  
+}
+
+
+# Usage: uptodate [ --versus BASE ] FILE ... || action
+# If BASE is specified and readable, then execute true if $RESUME and
+# all the $i are readable and uptodate with respect to BASE;
+# if BASE is not specified, then execute true if $RESUME and all the
+# $i are readable; in all other cases, execute false.
+#
+# Global: BN RESUME VERBOSE
+# (q.v. pipeline)
+function uptodate {
+  if [ -z "$RESUME" ] ; then false ; return ; fi
+  local BASE=
+  if [ "$1" = --versus ] ; then
+     BASE="$2"
+     shift 2
+     if [ ! -r "$BASE" ] ; then false ; return ; fi
+  fi
+  for f
+  do 
+    if [[ ! -r "$f" || ( -n "$BASE"  &&  "$BASE" -nt "$f" ) ]] ; then
+      false
+      return
+    fi
+  done
+  if [ -n "$VERBOSE" ] ; then
+      if [ -z "$BASE" ] ; then
+        if [ $# -gt 1 ] ; then 
+          verbose "$BN: the files $@ already exist"
+        else
+          verbose "$BN: the file $@ already exists"
+        fi
+      else
+        if [ $# -gt 1 ] ; then 
+          verbose "$BN: the files $@ are uptodate"
+        else
+          verbose "$BN: the file $@ is uptodate"
+        fi
+      fi
+  fi
+  true
+}
+
+# Global: SEEN
+function see {
+  SEEN[${#SEEN[@]}]="$1"
+}
+
+# Usage: if seen "$value" ; then ....
+# Global: SEEN
+# This is horribly inefficient for the sake of portability
+function seen {
+  local i
+  for i in "${SEEN[@]}"
+  do
+    if [ "$i" = "$1" ] ; then true ; return ; fi
+  done
+  false
+}
+
+
+
+if [ -n "$OUT" ] ; then
+  TMP=
+  if [ ! -w "$OUT" ] ; then
+    touch "$OUT" || die "unable to write to $OUT"
+  fi
+else 
+  mkdir -p "$TMP" || die "unable to mkdir $TMP"
+  OUT=$TMP/generate_GSM_dictionary.$$.out
+fi
+
+
+function output-dict {
+  dict "$1" >> "$OUT"
+}
+
+function dict {
+     awk '
+     BEGIN { tab = "	" }
+     # $1 == "^SERIES" { series = $3 ; next }
+     $1 == "^SAMPLE" { sample = $3 ; next }
+     $1 == "!Sample_title" { 
+          sub( "^!Sample_title *= *", "", $0)
+          print sample tab $0
+          next 
+     }' "$1"
+}
+
+# One-pass awk is more than twice as fast as egrep|awk
+# egrep "^\^SAMPLE|^!Sample_title|^\^SAMPLE" $f |
+
+for f
+do
+   bn=$(basename "$f")
+   g=${f/.gz}
+   if seen "$g" ; then
+     verbose skipping $f as ${bn/.gz} has already been processed
+   else
+     see "$g"
+     if [ "$f" = "$g" ] ; then
+       output-dict "$f"
+     else
+       zcat "$f" | output-dict -
+     fi
+   fi
+done
+
+sort -uo "$OUT" "$OUT"
+
+if [ -n "$TMP" ] ; then cat "$OUT" ; /bin/rm "$TMP" ; fi
+
