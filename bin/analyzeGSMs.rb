@@ -11,6 +11,7 @@
 # 0.0.6: "rule of 3" (excisions)
 # 0.0.7: fix bug counting excisions; fix --gsm and --gse options
 # 0.0.8: GSE = string
+# 0.0.9: GSM dictionary
 
 # Requirements: standard library
 
@@ -48,6 +49,18 @@ class Set
 end
 
 # Idiosyncratic methods:
+
+def stringify_gsms that
+    that.to_a.sort.each_with_index {|x,i| 
+      if @options.dictionary
+        print "GSM", x, ": ", @gsm_dictionary[x], "\n"
+      else
+        print "," if i>0
+        print x 
+      end
+  }
+end
+
 class Set 
   # self = connected_components
   def threeWayOverlaps(gsms)
@@ -63,7 +76,7 @@ class Set
             int3 = int2.intersection(gsms[gse3])
             next if int3.length == 0
             print "|#{gse1} ^ #{gse2} ^ #{gse3}| = #{int3.length}:\n"
-            print "   "; int3.stringify; print "\n"
+            print "   "; stringify_gsms int3; print "\n"
           }
         }
       }
@@ -75,17 +88,17 @@ end
 # q.v. gene_gene_disease_count.rb
 
 # Unless otherwise specified, for any key, options.key is nil
-options = OpenStruct.new
+@options = OpenStruct.new
 
-options.version = "0.0.7"
+@options.version = "0.0.9"
 
-options.gse = 0     # column number minus 1
-options.gsm = 1     # column number minus 1
-#options.input_delimiter = "\t"
-#options.output_delimiter = "\t"
+@options.gse = 0     # column number minus 1
+@options.gsm = 1     # column number minus 1
+#@options.input_delimiter = "\t"
+#@options.output_delimiter = "\t"
 
-options.input_delimiter = " "
-options.output_delimiter = " "
+@options.input_delimiter = " "
+@options.output_delimiter = " "
 
 optionparser = OptionParser.new do |opts|
   bn = File.basename($0)
@@ -94,41 +107,45 @@ optionparser = OptionParser.new do |opts|
   opts.separator("")
   opts.separator("Options:")
 
-  opts.on("-d", "--gsm COLUMN", "Column number of gsm (first is 1)") do |n|
-    options.gsm = n - 1 # COLUMN is the column number, options.gsm is the column index
+  opts.on("", "--gse COLUMN", "Column number of gse (first column is numbered 1; default is #{@options.gse})") do |n|
+    @options.gse = n.to_i - 1 # COLUMN is the column number, options.gsm is the column index
   end
 
-  opts.on("-g", "--gse COLUMN", "Column number of gse (first is 1)") do |n|
-    options.gse = n - 1 # COLUMN is the column number, options.gsm is the column index
+  opts.on("", "--gsm COLUMN", "Column number of gsm (first column is numbered 1; default is #{@options.gsm})") do |n|
+    @options.gsm = n.to_i - 1 # COLUMN is the column number, options.gsm is the column index
   end
 
   opts.on("-t", "--terse", "Terse mode") do |n|
-    options.terse = true
+    @options.terse = true
   end
 
   opts.on("", "--overlaps", "Provide information about three-way overlaps for GSEs that are not ignored") do |n|
-    options.overlaps = true
+    @options.overlaps = true
   end
 
   opts.on("", "--inputdelimiter CHAR", "Field delimiter for input, where CHAR may be tab or space for tab or space (default is tab)") do |n|
     # print "inputdelimiter=#{ n == "\t" ? "tab" : n == " " ? "space" : n}\n"
     n=" " if n == "space"
     n="\t" if n == "tab"
-    options.input_delimiter = n
+    @options.input_delimiter = n
   end
 
   opts.on("", "--outputdelimiter SEP", "Separator string for output, where SEP may be tab or space for tab or space (default is tab)") do |n|
     n=" " if n == "space"
     n="\t" if n == "tab"
-    options.output_delimiter = n
+    @options.output_delimiter = n
+  end
+
+  opts.on("", "--sample-title DICTIONARY", "Filename or pathname of file of or for GSM dictionary (see below)") do |dict|
+    @options.dictionary=dict
   end
 
   opts.on("-v", "--[no-]verbose", "Run verbosely") do |v|
-    options.verbose = v
+    @options.verbose = v
   end
 
   opts.on_tail("-V", "--version", "Show version and exit") do
-    puts options.version
+    puts @options.version
     exit
   end
 
@@ -159,6 +176,20 @@ Unless otherwise specified by the options, input consists of
 tab-delimited records with integer values for gse and gsm in the first
 two columns.
 
+If the "--sample-title DICT" option is specified, where DICT is a
+valid GSM dictionary (as defined in the next paragraph), then sample
+titles will be printed alongside GSM identifiers.
+
+A GSM dictionary is a file with lines of the form:
+
+SERIES<tab>SAMPLE<tab>sample title
+
+e.g.
+
+GSE10018	GSM252981	Yeast aging 1 generation microarray 1
+
+Lines beginging with "#" are ignored.
+
 Notes:
 FILE may be specified as - for stdin.
 
@@ -167,8 +198,12 @@ line is ignored (silently unless the verbose option is given).
 
 Long option names may be abbreviated to the shortest unique prefix.
 
-Example:
+Examples:
     #{bn} --input space -
+
+    #{bn} --sample-title gse_gsm.dict gse_gsm.txt
+
+    #{bn} --sample-title /Genomics/Users/peak/spell-tools/data/download/yeast/gse_gsm.dict /Genomics/Users/peak/spell-tools/data/sce/gse_gsm.txt
 
 EOS
 
@@ -193,16 +228,50 @@ if ARGV.length < 1
   exit 0
 end
 
+def verbose s
+  print s + "\n" if @options.verbose
+end
+
+
 gsms = {}
-count=0
 ok=0
+
+if @options.dictionary
+  begin
+    fdict = File.new(@options.dictionary, "r")
+  rescue
+    $stderr.print "file #{@options.dictionary} not found\n"
+    exit 1
+  end
+end
+
+@gsm_dictionary = {}
+count=0
+
+if fdict
+  begin
+    fdict.each_line { |line|
+      line.chomp!
+      next if line.start_with?("#")
+      count += 1
+      parts = line.split( "\t" )
+      gsm=parts[0].sub("GSM","").to_i
+      @gsm_dictionary[gsm] = parts[1]
+    }
+    verbose "#{count} items read from GSM dictionary"
+  rescue
+    $stderr.print "error reading GSM dictionary after reading #{count} line(s)\n"
+    exit 1
+  end
+end
+
 
 file = ARGV[0]
 if file == "-"
   fd = STDIN
 else
   begin
-    $stderr.print "Reading from #{ARGV[0]}\n" if options.verbose
+    verbose "Reading from #{ARGV[0]}"
     fd = File.new(file, "r")
   rescue
     $stderr.print "file #{file} not found\n"
@@ -211,13 +280,13 @@ else
 end
 
 # IO.foreach(file)
-
+count=0
 fd.each_line do |line|
   count += 1
   line.chomp!
-  parts = line.split( options.input_delimiter )
-  gse=parts[ options.gse ]
-  gsm=parts[ options.gsm ].to_i
+  parts = line.split( @options.input_delimiter )
+  gse=parts[ @options.gse ]
+  gsm=parts[ @options.gsm ].to_i
 
   if gsm > 0
     ok += 1
@@ -233,9 +302,9 @@ end
 
 fd.close unless file == "-"
 
-$stderr.puts "#{count} lines read, #{ok} valid pairs found" if options.verbose
+verbose "#{count} lines read, #{ok} valid pairs found" 
 
-sep = options.output_delimiter
+sep = @options.output_delimiter
 
 # This sort is solely to make the output tidy. 
 # (Sorting fixnum is very fast.)
@@ -244,7 +313,7 @@ ngses = gses.length
 
 ############################################### START OUTPUT
 
-print "Records for #{ngses} distinct GSE identifiers have been read.\n" unless options.terse
+print "Records for #{ngses} distinct GSE identifiers have been read.\n" unless @options.terse
 
 if ngses <= 1
   exit
@@ -275,7 +344,21 @@ print "There are #{overlaps(gses, gsms)} distinct cases of pairwise overlap.\n"
 equiv = gses.to_set.divide { |g1,g2|
   (gsms[g1].length == gsms[g2].length) and
   (gsms[g1] == gsms[g2])
-}.collect! { |c| c.first }
+}
+
+printed = nil
+equiv.each { |c| 
+  if c.length > 1 
+    if not printed
+      print "Equivalence classses of GSEs:\n"
+      printed = true
+    end
+    c.stringify
+    print "\n"
+  end
+}
+
+equiv.collect! { |c| c.first }
 
 gses = equiv.to_a.sort
 
@@ -379,6 +462,38 @@ print "Part 2: Ignoring Redundant GSEs\n"
 gses = gses - redundant.keys
 print "Examining #{gses.size} gses of interest...\n"
 
+def excise connected_components, gses, gsms
+  excisions = 0
+  connected_components.each { |c|
+    print "Connected component with #{c.length} GSEs:\n"
+    c.each { |gse1|
+      c.each { |gse2|
+        next if (gse1 == gse2) or
+        (gsms[gse1].length < gsms[gse2].length) or
+        ! gsms[gse1].intersect?(gsms[gse2])
+        diff = gsms[gse1] - gsms[gse2]
+        if diff.length > 2  # there must be at least 3 samples left
+          print "gsms[#{gse1}]: #{gsms[gse1].length} -> #{diff.length}\n"
+          if @options.verbose and @options.dictionary
+            printf "removing these GSMs from #{gse1}:\n"
+            stringify_gsms (gsms[gse1] & gsms[gse2])
+          end
+            gsms[gse1] = diff
+          excisions += 1
+        end
+      }
+    }
+  }
+
+  print "Number of excisions: #{excisions}\n"
+  
+  print "\nOverlaps after excision:\n"
+  overlapping = overlaps(gses.to_a, gsms, true)
+  print "After excision, there are #{overlapping} distinct cases of pairwise overlap.\n"
+end
+  
+
+
 [1].each { |criterion|
 
   print "criterion = #{criterion}...\n"
@@ -428,51 +543,28 @@ print "Examining #{gses.size} gses of interest...\n"
         inter = gsms[gse1].intersection(gsms[gse2])
         if inter.length > 0
           print "#{gse1} ^ #{gse2} = "
-          print "#{gsms[gse1].length} ^ #{gsms[gse2].length} = ", inter.length
-          print "  :: "; inter.stringify; print "\n"
+               print "#{gsms[gse1].length} ^ #{gsms[gse2].length} = ", inter.length
+               print "  :: "
+          print "\n" if @options.dictionary
+          stringify_gsms inter
+          print "\n"
         end
       }
     }
     if all === Set and all.length > 0
       overlap += 1 if inter.length > 1
-      print "all="; all.stringify ; print "\n"
+      print "all="; stringify_gsms all ; print "\n"
     end
   }
 
   print "The number of n-way intersections requiring review is #{overlap}\n"
 
-  if options.overlaps 
+  if @options.overlaps 
     print "\nThree-way overlaps:\n"
     connected_components.threeWayOverlaps(gsms)
   end
 
   #####
-
-  def self.excise connected_components, gses, gsms
-    excisions = 0
-    connected_components.each { |c|
-      print "Connected component with #{c.length} GSEs:\n"
-      c.each { |gse1|
-        c.each { |gse2|
-          next if (gse1 == gse2) or
-            (gsms[gse1].length < gsms[gse2].length) or
-            ! gsms[gse1].intersect?(gsms[gse2])
-          diff = gsms[gse1] - gsms[gse2]
-          if diff.length > 2  # there must be at least 3 samples left
-            print "gsms[#{gse1}]: #{gsms[gse1].length} -> #{diff.length}\n"
-            gsms[gse1] = diff
-            excisions += 1
-          end
-        }
-      }
-    }
-
-    print "Number of excisions: #{excisions}\n"
-
-    print "\nOverlaps after excision:\n"
-    overlapping = overlaps(gses.to_a, gsms, true)
-    print "After excision, there are #{overlapping} distinct cases of pairwise overlap.\n"
-  end
 
   print "\nExcising:\n"  
   excise connected_components, gses, gsms
