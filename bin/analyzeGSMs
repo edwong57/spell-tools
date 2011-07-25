@@ -1,5 +1,4 @@
 #!/bin/bash
-
 # Copyright (C) 2011 peak@princeton.edu
 # License: Creative Commons Attribution-NonCommerical-ShareAlike 3.0 Unported (CC BY-NC-SA 3.0)
 # See http://creativecommons.org/licenses/by-nc/3.0/
@@ -8,13 +7,17 @@
 # peak@princeton.edu 2011
 # For help: $0 --help
 
-VERSION=0.1.3
+VERSION=0.1.4
 
 # Updates:
 # 0.1.2: ${SEEN[]}
 # 0.1.3: Use ^SAMPLE instead of !Series_sample_id in case GSE file has been split
+# 0.1.4: --dict option to generate and use a GSM dictionary
 
-# Requires: zgrep that works with .gz files
+# Requires:
+#   zgrep that works with .gz files 
+#   $DN/analyzeGSMs.rb
+#   $DN/generate_GSM_dictionary if --dict option is specified
 
 BN=$(basename "$0")
 DN=$(cd $(dirname "$0"); pwd)
@@ -45,9 +48,12 @@ Options:
                    records are to be written.
   --append      :: append to OUT
   --skip        :: skip generation of OUT if it already exists
+  --dict FILE   :: generate and use a GSM dictionary of sample titles
 
-Example:
+Examples:
   $BN --dir .
+
+  $BN --dir . --dict gsm.dict
 
 Version: $BN $VERSION
 
@@ -73,6 +79,9 @@ do case "$1" in
            shift
            ;;
       --dir ) DIR="$2"
+           shift 2
+           ;;
+      --dict ) DICT="$2"
            shift 2
            ;;
       --out ) OUT="$2"
@@ -123,7 +132,7 @@ function seen {
 }
 
 # Usage: append PATHNAME
-# Global: VERBOSE OUT SEEN
+# Global: VERBOSE OUT SEEN DICT DN
 # SEEN[] is used to avoid processing the same file twice.
 function append {
     local f="$1"
@@ -144,6 +153,9 @@ function append {
     fi
     verbose append: gseid=$gseid
     $grep '^^SAMPLE' "$f" | sed 's/^[^=]*= *GSM/'"$gseid "'/' >> $OUT
+    if [ -n "$DICT" ] ; then
+      $DN/generate_GSM_dictionary --append "$DICT" "$f"
+    fi
     see "$g"
 }
 
@@ -180,7 +192,11 @@ fi
 if [ -r "$OUT" ] ; then
   sort -u -o "$OUT" "$OUT"
   verbose "$BN: analyzing $OUT ..."
-  "$DN/analyzeGSMs.rb" "$OUT" 
+  if [ -n "$DICT" ] ; then
+    "$DN/analyzeGSMs.rb" --sample-title "$DICT" "$OUT" 
+  else
+    "$DN/analyzeGSMs.rb" "$OUT" 
+  fi
 else
   echo "$BN: $OUT not found"
 fi
