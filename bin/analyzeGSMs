@@ -7,48 +7,56 @@
 # peak@princeton.edu 2011
 # For help: $0 --help
 
-VERSION=0.1.4
+VERSION=0.1.5
 
 # Updates:
-# 0.1.2: ${SEEN[]}
+# 0.1.2: SEEN
 # 0.1.3: Use ^SAMPLE instead of !Series_sample_id in case GSE file has been split
 # 0.1.4: --dict option to generate and use a GSM dictionary
+# 0.1.5: SEEN with fgrep
 
 # Requires:
-#   zgrep that works with .gz files 
+#   zgrep that works with .gz files
+#   fgrep -x
 #   $DN/analyzeGSMs.rb
 #   $DN/generate_GSM_dictionary if --dict option is specified
 
 BN=$(basename "$0")
 DN=$(cd $(dirname "$0"); pwd)
 
+DEFAULT_OUT="$DN/../data/sce"
 function help {
 cat <<EOF
 Syntax: $BN [OPTIONS] [FILE ...]
 
-Given a set of GSE files (some or all of which may be compressed),
-produce the mapping of GSE to GSM identifiers, and analyze it.
+Given a set of GEO series files (normally with names of the form
+GSE*_family.soft), this script produces the mapping of GSE to GSM
+identifiers, and analyzes it with a view to eliminating non-trivial
+overlaps.  An overlap is regarded as trivial if it contains just one
+GSM.
 
 Some or all of the files may be compressed (.gz); if both a compressed
-and uncompressed version are specified, only the uncompressed version
+and uncompressed version are specified, only the first file that is specified
 will be used.
 
 The set of GSE files may be specified explicitly by listing them on
 the command line, or implicitly by specifying a directory (see below).
 
-Unless otherwise specified, output is written to DN/../data/sce/gse_gsm.txt
-where DN is the directory in which this script resides.
+Unless otherwise specified, the mapping of GSE to GSM identifiers is
+written to DN/../data/sce/gse_gsm.txt where DN is the directory in
+which this script resides.  The "GSE" and "GSM" prefixes are omitted
+from the mapping file.
 
 If the output file already exists, then an error will be raised unless
 the --append or --skip option is specified.
 
 Options:
-  --dir DIR     :: the directory of GSE files to be analyzed
+  --append      :: append to OUT as specified by the --out option.
+  --skip        :: skip generation of OUT if it already exists.
+  --dir DIR     :: the directory of GSE files to be analyzed.
   --out OUT     :: the pathname of the file into which the gse-gsm
-                   records are to be written.
-  --append      :: append to OUT
-  --skip        :: skip generation of OUT if it already exists
-  --dict FILE   :: generate and use a GSM dictionary of sample titles
+                   records are to be written (default: as described above).
+  --dict FILE   :: generate and use a GSM dictionary of sample titles.
 
 Examples:
   $BN --dir .
@@ -102,38 +110,38 @@ function die {
 
 function verbose {
   if [ "$VERBOSE" ] ; then
-    echo "$@"
+    echo ${BN}: "$@"
   fi
 }
 
 if [ -z "$OUT" ] ; then
-  mkdir -p "$DN/../data/sce" || die "unable to mkdir $DN/../data/sce"
-  OUT=$(cd $DN/../data/sce; pwd)
+  mkdir -p "$DEFAULT_OUT" || die "unable to mkdir $DEFAULT_OUT"
+  OUT=$(cd "$DEFAULT_OUT; pwd)
   OUT=$OUT/gse_gsm.txt
 fi
 
-# Global: SEEN
-# Note: This is fast and takes constant time, whereas using += is slow
-# and takes more time as the array size grows:
-function see {
-  SEEN[${#SEEN[@]}]="$1"
-}
-
 # Usage: if seen "$value" ; then ....
 # Global: SEEN
-# This is horribly inefficient for the sake of portability
 function seen {
-  local i
-  for i in "${SEEN[@]}"
-  do
-    if [ "$i" = "$1" ] ; then true ; return ; fi
-  done
-  false
+  fgrep -q -x -m 1 "${1}" $SEEN
+}
+
+# Global: SEEN
+function see {
+  if seen "$1" ; then return; fi
+  echo "$1" >> $SEEN
+}
+
+function finish {
+  if [ -r "$SEEN" ] ; then
+    /bin/rm "$SEEN"
+  fi
+  exit
 }
 
 # Usage: append PATHNAME
 # Global: VERBOSE OUT SEEN DICT DN
-# SEEN[] is used to avoid processing the same file twice.
+# SEEN is used to avoid processing the same file twice.
 function append {
     local f="$1"
     local gse=$(basename "$f")
@@ -154,7 +162,7 @@ function append {
     verbose append: gseid=$gseid
     $grep '^^SAMPLE' "$f" | sed 's/^[^=]*= *GSM/'"$gseid "'/' >> $OUT
     if [ -n "$DICT" ] ; then
-      $DN/generate_GSM_dictionary --append "$DICT" "$f"
+      $DN/generate_GSM_dictionary "$f" >> "$DICT" 
     fi
     see "$g"
 }
@@ -168,6 +176,8 @@ else
   SKIP=  
 fi
 
+SEEN=$(mktemp /tmp/seen.XXXXXXXXXX) || die Unable to create a temporary file for SEEN
+
 if [ -z "$SKIP" ] ; then
   if [ -n "$DIR" ] ; then
     (cd "$DIR"
@@ -177,7 +187,8 @@ if [ -z "$SKIP" ] ; then
      done
     )
   elif [ $# = 0 ] ; then
-    die no GSE files have been specified
+    verbose "no GSE files have been specified"
+    finish
   else
     for f
     do
@@ -188,11 +199,11 @@ else
   verbose "Skipping generation of $OUT"
 fi
 
-
 if [ -r "$OUT" ] ; then
   sort -u -o "$OUT" "$OUT"
-  verbose "$BN: analyzing $OUT ..."
+  verbose "analyzing $OUT ..."
   if [ -n "$DICT" ] ; then
+    sort -u -o "$DICT" "$DICT"
     "$DN/analyzeGSMs.rb" --sample-title "$DICT" "$OUT" 
   else
     "$DN/analyzeGSMs.rb" "$OUT" 
@@ -200,3 +211,5 @@ if [ -r "$OUT" ] ; then
 else
   echo "$BN: $OUT not found"
 fi
+
+finish

@@ -7,7 +7,9 @@
 # peak@princeton.edu 2011
 # For help: $0 --help
 
-VERSION=0.1.2
+VERSION=0.1.3
+
+# 0.1.3: Use ^SAMPLE rather than Series_sample_id
 
 # Requires: 
 
@@ -142,7 +144,7 @@ function LHS {
     tag_pmid = "!Series_pubmed_id"          # per Lars
     tag_featCount = "!Platform_data_row_count" # agree with Lars
 
-    tag_sample_id = "!Series_sample_id"      # yes but Lars uses ^SAMPLE, which should be equivalent
+    tag_sample_id = "^SAMPLE"               #  Lars also uses ^SAMPLE, which is more reliable than !Series_sample_id
     tag_modDate = "!Series_last_update_date" # agree with Lars
 
     re = "^[^=]*= *"
