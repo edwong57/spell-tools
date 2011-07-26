@@ -7,7 +7,9 @@
 # peak@princeton.edu 2011
 # For help: $0 --help
 
-VERSION=0.1.1
+VERSION=0.1.2
+
+# 0.1.2: SEEN with fgrep
 
 # Requires: 
 
@@ -177,23 +179,25 @@ function uptodate {
   true
 }
 
-# Global: SEEN
-function see {
-  SEEN[${#SEEN[@]}]="$1"
-}
-
 # Usage: if seen "$value" ; then ....
 # Global: SEEN
-# This is horribly inefficient for the sake of portability
 function seen {
-  local i
-  for i in "${SEEN[@]}"
-  do
-    if [ "$i" = "$1" ] ; then true ; return ; fi
-  done
-  false
+  fgrep -q -x -m 1 "${1}" $SEEN
 }
 
+# Global: SEEN
+function see {
+  if seen "$1" ; then return; fi
+  echo "$1" >> $SEEN
+}
+
+# Global: SEEN
+function finish {
+  if [ -r "$SEEN" ] ; then
+    /bin/rm "$SEEN"
+  fi
+  exit
+}
 
 
 if [ -n "$OUT" ] ; then
@@ -226,6 +230,8 @@ function dict {
 # One-pass awk is more than twice as fast as egrep|awk
 # egrep "^\^SAMPLE|^!Sample_title|^\^SAMPLE" $f |
 
+SEEN=$(mktemp /tmp/seen.XXXXXXXXXX) || die Unable to create a temporary file for SEEN
+
 for f
 do
    bn=$(basename "$f")
@@ -244,5 +250,6 @@ done
 
 sort -uo "$OUT" "$OUT"
 
-if [ -n "$TMP" ] ; then cat "$OUT" ; /bin/rm "$TMP" ; fi
+if [ -n "$TMP" ] ; then cat "$OUT" ; /bin/rm "$OUT" ; fi
 
+finish
