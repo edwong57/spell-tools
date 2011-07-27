@@ -13,7 +13,7 @@
 # peak@princeton.edu 2011
 # For help: $0 --help
 
-VERSION=0.1.12
+VERSION=0.1.13
 
 # 0.1.4 - tested on Mac OSX; sometimes redirect stderr to .err file; --skip based on final.pcl
 # 0.1.5 - --resume
@@ -24,6 +24,7 @@ VERSION=0.1.12
 # 0.1.10 - package edu.princeton.function.tools;
 # 0.1.11 - --sfp option
 # 0.1.12  tweaks
+# 0.1.13  mkdir -p
 
 # Requires the following:
 #  java, javac
@@ -463,7 +464,7 @@ fi
 
 if [ ! -d "$SPELL_IN"  ] ; then die Unable to find input directory $SPELL_IN ; fi
 
-if [ ! -d "$SPELL_OUT" ] ; then mkdir "$SPELL_OUT" || die Unable to mkdir $SPELL_OUT ; fi
+if [ ! -d "$SPELL_OUT" ] ; then mkdir -p "$SPELL_OUT" || die Unable to mkdir $SPELL_OUT ; fi
 
 if [ -z "$MAP" ] ; then
    MAP="$KEGG_ID.map"

@@ -7,13 +7,14 @@
 # peak@princeton.edu 2011
 # For help: $0 --help
 
-VERSION=0.1.5
+VERSION=0.1.6
 
 # Updates:
 # 0.1.2: SEEN
 # 0.1.3: Use ^SAMPLE instead of !Series_sample_id in case GSE file has been split
 # 0.1.4: --dict option to generate and use a GSM dictionary
 # 0.1.5: SEEN with fgrep
+# 0.1.6: add missing quote
 
 # Requires:
 #   zgrep that works with .gz files
@@ -116,8 +117,8 @@ function verbose {
 
 if [ -z "$OUT" ] ; then
   mkdir -p "$DEFAULT_OUT" || die "unable to mkdir $DEFAULT_OUT"
-  OUT=$(cd "$DEFAULT_OUT; pwd)
-  OUT=$OUT/gse_gsm.txt
+  OUT=$(cd "$DEFAULT_OUT"; pwd)
+  OUT="$OUT/gse_gsm.txt"
 fi
 
 # Usage: if seen "$value" ; then ....
