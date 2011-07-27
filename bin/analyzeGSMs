@@ -7,7 +7,7 @@
 # peak@princeton.edu 2011
 # For help: $0 --help
 
-VERSION=0.1.6
+VERSION=0.1.7
 
 # Updates:
 # 0.1.2: SEEN
@@ -15,6 +15,7 @@ VERSION=0.1.6
 # 0.1.4: --dict option to generate and use a GSM dictionary
 # 0.1.5: SEEN with fgrep
 # 0.1.6: add missing quote
+# 0.1.7: --overwrite
 
 # Requires:
 #   zgrep that works with .gz files
@@ -49,10 +50,11 @@ which this script resides.  The "GSE" and "GSM" prefixes are omitted
 from the mapping file.
 
 If the output file already exists, then an error will be raised unless
-the --append or --skip option is specified.
+one of the following options is specified: "--overwrite", "--append", or "--skip"
 
 Options:
   --append      :: append to OUT as specified by the --out option.
+  --overwrite   :: overwrite OUT if it already exists.
   --skip        :: skip generation of OUT if it already exists.
   --dir DIR     :: the directory of GSE files to be analyzed.
   --out OUT     :: the pathname of the file into which the gse-gsm
@@ -85,6 +87,9 @@ do case "$1" in
            shift
            ;;
       --skip ) SKIP=1
+           shift
+           ;;
+      --overwrite ) OVERWRITE=1
            shift
            ;;
       --dir ) DIR="$2"
@@ -168,13 +173,18 @@ function append {
     see "$g"
 }
 
-
 if [ -r "$OUT" ] ; then
-  if [ -z "$SKIP" -a -z "$APPEND" ] ; then
-      die "the output file $OUT already exists"
+
+  # check consistency of specified options:
+  if [ -n "$OVERWRITE" -a -n "$SKIP" ] ; then die "Please specify either --overwrite or --skip but not both" ; fi
+
+  if [ -n "$OVERWRITE" ] ; then 
+    /bin/rm "$OUT" || die "unable to rm $OUT"
+  elif [ -z "$SKIP" -a -z "$APPEND" ] ; then
+    die "the output file $OUT already exists"
   fi
 else
-  SKIP=  
+  SKIP=
 fi
 
 SEEN=$(mktemp /tmp/seen.XXXXXXXXXX) || die Unable to create a temporary file for SEEN

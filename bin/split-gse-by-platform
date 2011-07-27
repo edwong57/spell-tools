@@ -10,13 +10,14 @@
 # peak@princeton.edu 2011
 # For help: $0 --help
 
-VERSION=0.0.12
+VERSION=0.0.13
 
 # Requires: ln
 
 # History:
 # 0.1.11:  + --resume; use stat portably; fix handling of symlink
 # 0.1.12:  rm xx* files
+# 0.1.13:  handle case where wildcard specification yields no files
 
 BN=`basename $0`
 
@@ -338,7 +339,7 @@ do
   g=${f/.gz/}
   if [ "$f" = "$g" ]; then
     if [ ! -r "$f" ] ; then
-      echo "$file :: not found"
+      echo "$BN: $file not found"
       continue
     fi
   elif [ -r "$f" ] ; then
@@ -348,6 +349,9 @@ do
       gunzip -c "$f" > "$g"
     fi
     f="$g"
+  elif [ ! -r "$g" ] ; then
+    echo "$BN: neither $f nor $g found"
+    continue
   fi
 
   bname=$(basename "$f")
@@ -466,4 +470,7 @@ do
 done  # outer loop
 
 # FOUR
-/bin/rm xx[0-9][0-9][0-9][0-9]
+if [ -r xx0000 ] ; then
+  /bin/rm xx[0-9][0-9][0-9][0-9]
+fi
+
