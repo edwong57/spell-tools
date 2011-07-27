@@ -10,17 +10,19 @@
 # peak@princeton.edu 2011
 # For help: $0 --help
 
-VERSION=0.0.11
+VERSION=0.0.12
 
 # Requires: ln
 
 # History:
 # 0.1.11:  + --resume; use stat portably; fix handling of symlink
+# 0.1.12:  rm xx* files
 
 BN=`basename $0`
 
 VERBOSITY=0
 prefix=xx
+FOUR=4
 
 # Minimum number of samples:
 MINIMUM=1
@@ -210,6 +212,7 @@ function execute {
   "$@"  
 }
 
+# FOUR
 function pad {
  case ${#1} in
         1 ) echo "000$1" ;;
@@ -225,7 +228,7 @@ function splitup {
   # idiosyncracy of csplit requires decrementing by 1:
   local i=$(( NPLATFORMS - 1 )) 
   local j=$(( NSAMPLES - 1 ))
-  csplit -s -n 4 "$1" "/^^SERIES/" "/^^PLATFORM/" "{${i}}" "/^^SAMPLE/" "{${j}}"
+  csplit -s -n $FOUR "$1" "/^^SERIES/" "/^^PLATFORM/" "{${i}}" "/^^SAMPLE/" "{${j}}"
 }
 
 # Syntax: prepare_file PLATFORM
@@ -244,8 +247,8 @@ function prepare_file {
     fi
 }
 
-# If the target minimum number of samples has not been for a platform,
-# then remove the corresponing platform.
+# If the target minimum number of samples has not been reached for a platform,
+# then remove the corresponding platform.
 # Set REMOVED to be the number of platform-specific files that are
 # removed by this function.
 # Global: PLATFORMS SAMPLES MINIMUM OUT REMOVED
@@ -325,7 +328,7 @@ else
    mkdir -p "$DIR" || die "mkdir -p $DIR returned $?"
 fi
 
-(date ; echo "$0 ${args[@]}" ; echo "") >> $DIR/.$BN.log
+(date ; echo "# cd $(pwd)"; echo "$0 ${args[@]}" ; echo "") >> $DIR/.$BN.log
 
 ############ FOR EACH FILE
 
@@ -461,3 +464,6 @@ do
   fi
 
 done  # outer loop
+
+# FOUR
+/bin/rm xx[0-9][0-9][0-9][0-9]
