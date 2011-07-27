@@ -558,7 +558,8 @@ public class SeriesFamilyParser {
 			fout.print(gene.toUpperCase() + "\t" + gene.toUpperCase() + "\t1");
 			for (int i = 0; i < sampArr.length; i++) {
 				String val = samples.get(sampArr[i]).get(gene);
-				if (val == null) {
+				//peak: handle "null"
+				if (val == null || "null".equals(val) ) {
 					fout.print("\t");
 				}
 				else {
