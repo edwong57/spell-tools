@@ -15,6 +15,7 @@
 # 0.0.10: --excisions EXCISIONS ; handle missing entries from GSM dictionary explicitly
 # 0.0.11: bugfix for excisions (introduce all_gses)
 # 0.0.12: optimize EXCISIONS file
+# 0.0.13: co-ordinate documentation with analyzeGSMs
 
 # Requirements: standard library
 
@@ -93,7 +94,7 @@ end
 # Unless otherwise specified, for any key, options.key is nil
 @options = OpenStruct.new
 
-@options.version = "0.0.12"
+@options.version = "0.0.13"
 
 @options.gse = 0     # column number minus 1
 @options.gsm = 1     # column number minus 1
@@ -162,7 +163,10 @@ optionparser = OptionParser.new do |opts|
 This script can be used to analyze the pattern of sample overlaps
 amongst a set of GEO series files.  Optionally, a set of excision
 directives can be written to a file, as explained below under
-"Excision Directives".
+"Excision Directives".  If these directives are followed, then the
+resultant set of files will have all the samples in the original set
+of files, but the non-trivial sample overlaps will be eliminated or
+greatly reduced.
 
 In the following:
 
@@ -224,8 +228,20 @@ The second form identifies a set of samples to be excised from the
 corresponding gse file.  If no gsm values are given, nothing needs
 to be excised.
 
-If all the directives are followed, then the resultant
-family.soft files will have no non-trivial sample overlaps.
+If all the directives are followed, then the resulting family.soft
+files will have few if any non-trivial overlaps.
+
+The directives are derived by applying the following procedure
+iteratively:
+
+    Consider two family.soft files, A and B, and let:
+    a = gsms(A), the set of samples in A
+    b = gsms(B), the set of samples in B.
+
+    If |a & b| > 1 and |a| >= |b| and |a - b| > 2,
+    then excise a&b from A.
+
+The directives are then obtained by consolidating the excision operations.
 
 
 GSM Dictionary
