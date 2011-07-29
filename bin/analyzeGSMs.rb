@@ -12,6 +12,9 @@
 # 0.0.7: fix bug counting excisions; fix --gsm and --gse options
 # 0.0.8: GSE = string
 # 0.0.9: GSM dictionary
+# 0.0.10: --excisions EXCISIONS ; handle missing entries from GSM dictionary explicitly
+# 0.0.11: bugfix for excisions (introduce all_gses)
+# 0.0.12: optimize EXCISIONS file
 
 # Requirements: standard library
 
@@ -23,8 +26,8 @@ require 'ostruct'
 require 'set'
 
 class Set
-  # return true iff the intersection is nonempty
-  # without using cache: 19s; using cache: 28s; 
+  # Return true iff the intersection is nonempty.
+  # Without using cache: 19s; using cache: 28s; 
   def intersect? enum
     if enum === Set and length <= enum.length
       each { |o| return true if enum.include?(o)  }
@@ -53,7 +56,7 @@ end
 def stringify_gsms that
     that.to_a.sort.each_with_index {|x,i| 
       if @options.dictionary
-        print "GSM", x, ": ", @gsm_dictionary[x], "\n"
+        print "GSM", x, ": ", (@gsm_dictionary[x] ? @gsm_dictionary[x] : ""), "\n"
       else
         print "," if i>0
         print x 
@@ -90,7 +93,7 @@ end
 # Unless otherwise specified, for any key, options.key is nil
 @options = OpenStruct.new
 
-@options.version = "0.0.9"
+@options.version = "0.0.12"
 
 @options.gse = 0     # column number minus 1
 @options.gsm = 1     # column number minus 1
@@ -100,8 +103,10 @@ end
 @options.input_delimiter = " "
 @options.output_delimiter = " "
 
+bn = File.basename($0)
+
 optionparser = OptionParser.new do |opts|
-  bn = File.basename($0)
+
   opts.banner = "Usage: #{bn} [options] FILE"
 
   opts.separator("")
@@ -140,6 +145,10 @@ optionparser = OptionParser.new do |opts|
     @options.dictionary=dict
   end
 
+  opts.on("", "--excisions EXCISIONS", "Filename or pathname of file for excision directives (see below)") do |file|
+    @options.excisions=file
+  end
+
   opts.on("-v", "--[no-]verbose", "Run verbosely") do |v|
     @options.verbose = v
   end
@@ -150,11 +159,36 @@ optionparser = OptionParser.new do |opts|
   end
 
   explanation = <<-EOS
-Let gse be a numeric GSE identifier, and let gsms(gse) be the set of
-numeric GSM identifiers associated with gse.
+This script can be used to analyze the pattern of sample overlaps
+amongst a set of GEO series files.  Optionally, a set of excision
+directives can be written to a file, as explained below under
+"Excision Directives".
 
+In the following:
+
+ . gse denotes an identifier of a family.soft file (usually this is a
+   numeric GSE identifier, or a decimal identifier of the form x.y
+   representing the series for platform y in GSE x)
+ . gsm denotes the integer component of a GSM identifier
+ . gsms(gse) is the set of integer gsm values associated with gse.
+
+Input
+-----
+Unless otherwise specified by the options, input consists of
+tab-delimited records of the form:
+
+gse<tab>gsm
+
+Normally, gse is an integer, n, representing GSEn, or a decimal of the
+form x.y representing GPLy in GSEx.
+
+Analysis
+--------
 This script analyzes the pattern of intersections amongst gsms(gse)
-for a set of gse values:
+for a set of gse values, with a view to identifying gse files
+that can be ignored, and to identifying a sequence of excision
+directives that would be sufficient to eliminate non-trivial
+overlaps:
 
 1) identical: if gsms(gse1) == gsms(gse2) then one of them can be
    ignored;
@@ -172,13 +206,33 @@ Amongst all the remaining GSE files, define the relation:
 This relation defines a set of connected components.  This script
 lists the connected components with more than one member.
 
-Unless otherwise specified by the options, input consists of
-tab-delimited records with integer values for gse and gsm in the first
-two columns.
 
+Excision Directives
+-------------------
+An excision directive is a line with one of these forms:
+
+gse ALL
+gse [gsm ....]
+
+That is, an excision directive is a gse value followed either by ALL
+or by a possibly empty sequence of "gsm" values.
+
+The first form means that the entire GEO series family.soft file is
+redundant and can be removed from consideration.
+
+The second form identifies a set of samples to be excised from the
+corresponding gse file.  If no gsm values are given, nothing needs
+to be excised.
+
+If all the directives are followed, then the resultant
+family.soft files will have no non-trivial sample overlaps.
+
+
+GSM Dictionary
+--------------
 If the "--sample-title DICT" option is specified, where DICT is a
-valid GSM dictionary (as defined in the next paragraph), then sample
-titles will be printed alongside GSM identifiers.
+valid GSM dictionary, then sample titles will be printed alongside GSM
+identifiers.
 
 A GSM dictionary is a file with lines of the form:
 
@@ -189,6 +243,7 @@ e.g.
 GSE10018	GSM252981	Yeast aging 1 generation microarray 1
 
 Lines beginging with "#" are ignored.
+
 
 Notes:
 FILE may be specified as - for stdin.
@@ -201,9 +256,9 @@ Long option names may be abbreviated to the shortest unique prefix.
 Examples:
     #{bn} --input space -
 
-    #{bn} --sample-title gse_gsm.dict gse_gsm.txt
+    #{bn} --sample-title gse_gsm.dict --excisions excisions.txt gse_gsm.txt
 
-    #{bn} --sample-title /Genomics/Users/peak/spell-tools/data/download/yeast/gse_gsm.dict /Genomics/Users/peak/spell-tools/data/sce/gse_gsm.txt
+    #{bn} --sample-title data/download/yeast/gse_gsm.dict data/sce/gse_gsm.txt
 
 EOS
 
@@ -311,14 +366,30 @@ sep = @options.output_delimiter
 gses = gsms.keys.sort
 ngses = gses.length
 
+all_gses = gses.dup  # freeze
+
+@redundant = {}
+@subsumed  = {}
+@excised   = {}
+
 ############################################### START OUTPUT
 
 print "Records for #{ngses} distinct GSE identifiers have been read.\n" unless @options.terse
 
-if ngses <= 1
+if ngses == 0
   exit
 end
 
+
+@excisions = nil
+
+if @options.excisions
+  begin
+    @excisions = File.open(@options.excisions, "w")
+  rescue
+    print "#{bn}: ERROR - unable to open file #{@options.excisions} but proceeding anyway\n"
+  end
+end
 
 # gses:Array, gsms:Set
 def overlaps(gses, gsms, verbose=false)
@@ -358,6 +429,19 @@ equiv.each { |c|
   end
 }
 
+if @excisions
+  equiv.each { |c| 
+    c.each_with_index { |gse,i|
+      if i > 0
+        @excised[gse] = true
+      end
+    }
+  }
+end
+
+
+# Select a representative from each equivalence class
+# TODO: should we collect the greatest value of the GSE id?
 equiv.collect! { |c| c.first }
 
 gses = equiv.to_a.sort
@@ -370,8 +454,6 @@ print "Henceforth, unless otherwise specified, statistics ignore the #{nduplicat
 
 print "There are #{overlaps(gses, gsms)} distinct cases of pairwise overlap (ignoring the duplicate GSEs).\n"
 
-redundant = {}
-subsumed={}
 
 # subsets[gse] is the set of GSEs which are subsets of gse
 subsets = {}
@@ -400,14 +482,15 @@ subsets.keys.each { |gse|
   subsets[gse].stringify
   if diff.length == 0
     print " : SUBSUMED\n" 
-    subsumed[gse]  = 1
-    redundant[gse] = 1
+    @subsumed[gse]  = 1
+    @redundant[gse] = 1
+    @excised[gse] = true
   else
     print "\n"
   end
 }
 
-print "\nThe number of GSEs that are 'SUBSUMED': #{redundant.keys.length}\n"
+print "\nThe number of GSEs that are 'SUBSUMED': #{@redundant.keys.length}\n"
 
 # Recalculate ignoring the redundant values of gse
 overlapping = {}
@@ -417,9 +500,9 @@ overlap = 0
 subsets = {}
 gses.each_with_index { |gse1, i|
   gses.each_with_index { |gse2, j|
-    next if i == j or subsumed[gse1] or subsumed[gse2]
+    next if i == j or @subsumed[gse1] or @subsumed[gse2]
     if gsms[gse1].subset?( gsms[gse2] )
-      redundant[gse1]=1
+      @redundant[gse1]=1
     elsif (i < j) and (gsms[gse1].intersect? gsms[gse2])
       overlapping[gse1] = 1
       overlapping[gse2] = 1
@@ -433,10 +516,10 @@ print "\nSummary:\n"
 print "Number of GSEs including duplicates:                    #{ngses}\n"
 
 print "   # duplicates:                 #{nduplicates}\n"
-print "   # non-trivial union:          #{subsumed.keys.length}\n"
-print "   # proper inclusion:           #{redundant.keys.length - subsumed.keys.length}\n"
+print "   # non-trivial union:          #{@subsumed.keys.length}\n"
+print "   # proper inclusion:           #{@redundant.keys.length - @subsumed.keys.length}\n"
 
-print "Total number of redundant GSEs (excluding duplicates):  #{redundant.keys.length}\n"
+print "Total number of redundant GSEs (excluding duplicates):  #{@redundant.keys.length}\n"
 print "\n"
 print "# remaining distinct cases of overlap:                  #{overlap}\n"
 print "# GSEs that overlap with another.                       #{overlapping.keys.length}\n"
@@ -459,7 +542,7 @@ p connected_components
 
 ########################################################################
 print "Part 2: Ignoring Redundant GSEs\n"
-gses = gses - redundant.keys
+gses = gses - @redundant.keys
 print "Examining #{gses.size} gses of interest...\n"
 
 def excise connected_components, gses, gsms
@@ -469,16 +552,25 @@ def excise connected_components, gses, gsms
     c.each { |gse1|
       c.each { |gse2|
         next if (gse1 == gse2) or
-        (gsms[gse1].length < gsms[gse2].length) or
-        ! gsms[gse1].intersect?(gsms[gse2])
+                (gsms[gse1].length < gsms[gse2].length) or
+                ! gsms[gse1].intersect?( gsms[gse2] )
+
         diff = gsms[gse1] - gsms[gse2]
         if diff.length > 2  # there must be at least 3 samples left
+          inter = (gsms[gse1] & gsms[gse2])
+          if @excisions
+            if @excised[gse1] 
+              @excised[gse1] = (@excised[gse1] + inter)
+            else
+              @excised[gse1] = inter
+            end
+          end
           print "gsms[#{gse1}]: #{gsms[gse1].length} -> #{diff.length}\n"
           if @options.verbose and @options.dictionary
             printf "removing these GSMs from #{gse1}:\n"
-            stringify_gsms (gsms[gse1] & gsms[gse2])
+            stringify_gsms inter
           end
-            gsms[gse1] = diff
+          gsms[gse1] = diff
           excisions += 1
         end
       }
@@ -573,3 +665,27 @@ end
   excise connected_components, gses, gsms
 }  # criterion
 
+if @excisions
+  # For the sake of neatness, proceed in three passes:
+  all_gses.each { |gse|
+    case @excised[gse]
+    when true
+      @excisions.print gse," ALL\n"
+    end
+  }
+  all_gses.each { |gse|
+    case @excised[gse]
+    when Set
+      @excisions.print gse
+      @excised[gse].each {|gsm| @excisions.print " #{gsm}"}
+      @excisions.print "\n"
+    end
+  }
+  all_gses.each { |gse|
+    case @excised[gse]
+    when nil
+      @excisions.print gse,"\n"
+    end
+  }
+    @excisions.close
+end
