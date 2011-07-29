@@ -1,0 +1,284 @@
+#!/bin/bash
+# Copyright (C) 2011 peak@princeton.edu
+# License: Creative Commons Attribution-NonCommerical-ShareAlike 3.0 Unported (CC BY-NC-SA 3.0)
+# See http://creativecommons.org/licenses/by-nc/3.0/
+# Attribution shall include the copyright notice above.
+
+# peak@princeton.edu 2011
+# For help: $0 --help
+
+# Compare: split-gse-by-platform
+
+VERSION=0.0.3
+
+# History:
+# 0.0.3: --file FILE
+
+# Requires:
+#   fgrep -x
+
+BN=`basename $0`
+
+VERBOSITY=0
+prefix=xx
+FOUR=4
+
+# Portability stuff:
+case `uname` in
+  Darwin ) STATOPT=-f       ;;
+  *      ) STATOPT=--format ;;
+esac
+
+function help {
+cat <<EOF
+Syntax: $BN [OPTIONS] --out OUT PATHNAME [SAMPLE ....]
+
+This script excises the specified samples from the single-platform
+family.soft file specified by PATHNAME, and writes the output to a
+file as follows:
+
+ . if OUT is a directory, the output is written to OUT/FILENAME
+   where FILENAME is the basename of PATHNAME;
+ . otherwise, the output is written to OUT.
+
+Each SAMPLE should be either a GEO sample identifier (e.g. GSM123) or
+accession number (e.g. 123).
+
+WARNING: Currently the ^SERIES section of each output file is just a
+         copy of the ^SERIES section of the input.
+
+WARNING: It is an error to specify an output file that has the same
+         inode as the input file.
+
+Options:
+  --out OUT      :: directory or filename for output (required - see above)
+  --file FILE    :: read the list of SAMPLE ids from FILE instead of from the command line
+  -f FILE        :: same as --file FILE
+  -v | --verbose :: verbose
+  -V | --version :: print version
+
+Assumptions:
+
+The input file should have exactly one PLATFORM section; otherwise,
+the script emits an error message and terminates.
+
+It is assumed that the input GSE file is organized into sections as follows:
+
+^DATABASE
+^SERIES
+^PLATFORM
+...
+^SAMPLE
+...
+
+(This assumption has been verified for a very large collection of GSE files in existence as of June 2011.)
+
+
+Examples:
+
+$ $BN --out sce GSE10079_family.soft GSM333142 GSM333143 GSM333144
+
+$ $BN --out sce/GSE10079x_family.soft GSE10079_family.soft 333142 333143 333144
+
+Notes:
+ * If PATHNAME has the .gz suffix, the file will be unzipped in the same
+   directory (leaving the original file in place) except that if the unzipped
+   version seems to exist, it will be used.
+ * The date and a copy of the command line is appended to the file .$BN.log in the
+   same directory as the output file.
+
+Version: $BN $VERSION
+
+See source for copyright and licensing details.
+EOF
+}
+
+args=("$@")
+
+function die {
+    echo "$BN: $@" >&2
+    exit 1
+}
+
+while [ "$1" ]
+do case "$1" in
+      -h | --help ) help
+           exit
+           ;;
+      -v | --verbose ) VERBOSE=1
+	   VERBOSITY=1
+           shift
+           ;;
+      -f | --file ) FILE="$2"
+	   if [ ! -r "$FILE" ] ; then "die unable to read $FILE" ; fi
+           shift 2
+           ;;
+      --out ) DIR="$2"
+           shift 2
+           ;;
+      --verbosity ) VERBOSITY="$2"
+	   if [ "$VERBOSITY" -gt 0 ] ; then VERBOSE=1 ; fi
+           shift 2
+           ;;
+      -V | --version ) echo $BN version $VERSION
+           exit
+           ;;
+      -* ) echo "$BN: unknown option $1"
+           exit 1
+           ;;
+      *  ) break
+           ;;
+  esac
+done
+
+
+function verbose {
+  if [ "$VERBOSE" ] ; then
+    echo "$@"
+  fi
+}
+
+# Syntax: vverbose LEVEL text ...
+# Global: VERBOSITY
+function vverbose {
+  local vv="$1"
+  shift
+  if [ "$VERBOSITY" -ge "$vv"  ] ; then
+    echo "$@"
+  fi
+}
+
+# FOUR
+function pad {
+ case ${#1} in
+        1 ) echo "000$1" ;;
+        2 ) echo "00$1" ;;
+        3 ) echo "0$1" ;;
+        4 ) echo "$1" ;;
+ esac
+}
+
+# Global NPLATFORMS NSAMPLES
+function splitup {
+  # --quiet and {*} are not supported on Mac OSX
+  # idiosyncracy of csplit requires decrementing by 1:
+  local i=$(( NPLATFORMS - 1 ))
+  local j=$(( NSAMPLES - 1 ))
+  csplit -s -n $FOUR "$1" "/^^SERIES/" "/^^PLATFORM/" "{${i}}" "/^^SAMPLE/" "{${j}}"
+}
+
+# Usage: if omitp sample ; then ...
+# Global: OMIT
+function omitp {
+  fgrep -q -x -m 1 "${1}" $OMIT
+}
+
+# Syntax: prepare_file file
+# Global: OUT
+function prepare_file {
+  vverbose 2  preparing "$OUT"
+  cat ${prefix}0000 > "$OUT"
+  cat ${prefix}0001 >> "$OUT"
+  cat ${prefix}0002 >> "$OUT"
+}
+
+
+# Copy the admissible samples starting with xx0003
+# xx0000 header
+# xx0001 series
+# xx0002 platform
+# Global: NSAMPLES OUT
+function winnow {
+  local i j xx this
+  for ((i=0; i < NSAMPLES ; i++)) ; do
+    j=$(pad $(( i + 3 )) )
+    xx=${prefix}$j
+    this=$(grep '^^SAMPLE' $xx | sed 's/[^=]* *= *//')
+    if ! omitp "$this" ; then
+       verbose adding $this
+       cat $xx >> "$OUT"
+    fi
+  done
+}
+
+### PROCEED
+
+  if [ -z "$DIR" ] ; then die No output file or directory was specified. ; fi
+
+  if [ $# = 0 ]    ; then verbose $BN: No input file specified ; exit ; fi
+
+  file="$1"
+  shift
+
+  # Samples to omit:
+
+  if [ $# = 0 -a -z "$FILE" ] ; then die No samples to excise have been specified ; fi
+
+  OMIT=$(mktemp /tmp/excise-gse-by-sample.XXXXXXXXXX) || die Unable to create a temporary file for samples
+
+  if [ $# -gt 0 ] ; then
+    if [ -n "$FILE" ] ; then die Samples to excise cannot be specified by file and on the command line ; fi
+    for omit
+    do
+      echo "$omit" >> $OMIT
+    done
+  else
+    cat "$FILE" > $OMIT
+  fi
+  /bin/mv $OMIT $OMIT.bak
+  sed -e 's/^  *//' -e 's/  *$//' -e 's/^\([0-9]\)/GSM\1/' $OMIT.bak > $OMIT
+
+  f="$file"
+  g=${f/.gz/}
+  if [ "$f" = "$g" ]; then
+    if [ ! -r "$f" ] ; then
+      echo "$BN: $file not found"
+      exit 1
+    fi
+  elif [ -r "$f" ] ; then
+    if [ -r "$g" ] ; then
+      verbose reading $g as it already exists
+    else
+      gunzip -c "$f" > "$g"
+    fi
+    f="$g"
+  elif [ ! -r "$g" ] ; then
+    die "neither $f nor $g found"
+  fi
+
+  verbose "$BN: $f"
+
+  NPLATFORMS=($(grep '^^PLATFORM' "$f" | wc -l))
+  if [ $NPLATFORMS != 1 ] ; then "die the input file $file has $NPLATFORMS" ; fi
+
+  NSAMPLES=$(grep -c '^^SAMPLE' "$f")
+
+  verbose NPLATFORMS=$NPLATFORMS
+  verbose NSAMPLES=$NSAMPLES
+
+  if [ -d "$DIR" ] ; then
+    OUT="$DIR"/$(basename "$f")
+  else
+    OUT="$DIR"
+  fi
+
+  if [ -r "$OUT" ] ; then
+    x=$(stat $STATOPT "%i" "$f" "$OUT" | uniq | wc -l)
+    if [ "$x" != 2 ] ; then die input and output files are identical ; fi
+  fi
+
+
+  splitup "$f" || die "ERROR: csplit $file failed"
+
+  prepare_file "$f"  # in particular, set $OUT
+
+  (date ; echo "# cd $(pwd)"; echo "$0 ${args[@]}" ; echo "") >> $(dirname "$OUT")/.$BN.log
+
+  winnow
+
+# FOUR
+if [ -r ${prefix}0000 ] ; then
+  /bin/rm ${prefix}[0-9][0-9][0-9][0-9]
+fi
+
+for f in $OMIT $OMIT.bak ; do if [ -w $f ] ; then /bin/rm "$f" ; fi ; done
