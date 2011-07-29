@@ -235,7 +235,8 @@ public class SeriesFamilyParser {
 	        				// Is a missing value
 	        				emptyExpressionValue = true;
 	        			}
-	        			else if (ev.equals("null")) {                            
+					//peak: toUpperCase() needed
+	        			else if ("NULL".equals(ev.toUpperCase() )) {
 	        				nullExpressionValue = true;
 	        			}
 	        			else if (ev.equals("0")) {
@@ -559,7 +560,7 @@ public class SeriesFamilyParser {
 			for (int i = 0; i < sampArr.length; i++) {
 				String val = samples.get(sampArr[i]).get(gene);
 				//peak: handle "null"
-				if (val == null || "null".equals(val) ) {
+				if (val == null || "NULL".equals(val.toUpperCase()) ) {
 					fout.print("\t");
 				}
 				else {
