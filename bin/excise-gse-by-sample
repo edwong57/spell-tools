@@ -9,15 +9,20 @@
 
 # Compare: split-gse-by-platform
 
-VERSION=0.0.3
+args=("$@")
+
+VERSION=0.0.5
 
 # History:
 # 0.0.3: --file FILE
+# 0.0.4: --excisions EXCISIONS
+# 0.0.5: debugged
 
 # Requires:
 #   fgrep -x
 
 BN=`basename $0`
+DN=`dirname $0`
 
 VERBOSITY=0
 prefix=xx
@@ -31,7 +36,7 @@ esac
 
 function help {
 cat <<EOF
-Syntax: $BN [OPTIONS] --out OUT PATHNAME [SAMPLE ....]
+Syntax: $BN [OPTIONS] --out OUT [PATHNAME [SAMPLE ....]]
 
 This script excises the specified samples from the single-platform
 family.soft file specified by PATHNAME, and writes the output to a
@@ -44,6 +49,10 @@ file as follows:
 Each SAMPLE should be either a GEO sample identifier (e.g. GSM123) or
 accession number (e.g. 123).
 
+A set of PATHNAME and corresponding SAMPLE values may also be specified in an
+excisions file as specified using the --excisions option.  In this case,
+OUT must be a directory.
+
 WARNING: Currently the ^SERIES section of each output file is just a
          copy of the ^SERIES section of the input.
 
@@ -54,6 +63,11 @@ Options:
   --out OUT      :: directory or filename for output (required - see above)
   --file FILE    :: read the list of SAMPLE ids from FILE instead of from the command line
   -f FILE        :: same as --file FILE
+  --excisions EXCISIONS :: process the directives in the file named EXCISIONS,
+                    where each directive has one of these forms:
+                    PATHNAME ALL        # ignore this file
+                    PATHNAME            # copy the file
+                    PATHNAME SAMPLE ... # excise the specified gsm ids
   -v | --verbose :: verbose
   -V | --version :: print version
 
@@ -93,8 +107,6 @@ See source for copyright and licensing details.
 EOF
 }
 
-args=("$@")
-
 function die {
     echo "$BN: $@" >&2
     exit 1
@@ -110,10 +122,13 @@ do case "$1" in
            shift
            ;;
       -f | --file ) FILE="$2"
-	   if [ ! -r "$FILE" ] ; then "die unable to read $FILE" ; fi
+	   if [ ! -r "$FILE" ] ; then die "unable to read $FILE" ; fi
            shift 2
            ;;
       --out ) DIR="$2"
+           shift 2
+           ;;
+      --excisions ) EXCISIONS="$2"
            shift 2
            ;;
       --verbosity ) VERBOSITY="$2"
@@ -201,23 +216,69 @@ function winnow {
   done
 }
 
+# Syntax: excisions FILE
+# Global: DIR (a directory)
+function excisions {
+    local file="$1"
+    local outfile gse gsms gsm g1 g2
+    cat "$file" | while read gse gsms
+    do
+      if [ "$gsms" = "ALL" ]; then
+         verbose skipping $gse
+         continue
+      fi
+      # Infer the actual filename:
+      if [[ $gse =~ ^[0-9][0-9]*$ ]] ; then 
+         gse="GSE$gse"
+      elif [[ $gse =~ ^[0-9][0-9]*\.[0-9][0-9]$ ]] ; then
+         g1=${gse/[^.]*./}
+         g2=${gse/.*/}
+         gse=GSE$g1.GPL$g2
+      fi
+      if [ -r "${gse}_family.soft" ] ; then gse="${gse}_family.soft" ; fi
+      if [ "$gsms" = "" ]; then
+         /bin/cp -p "${gse}" "$DIR"
+         continue
+      fi
+      verbose "$BN: recursive call: excise-gse-by-sample --out $DIR $gse $gsms"
+      $DN/excise-gse-by-sample --out "$DIR" "$gse" $gsms
+    done
+}
+
 ### PROCEED
 
-  if [ -z "$DIR" ] ; then die No output file or directory was specified. ; fi
+  if [ -z "$DIR" ] ; then die "No output file or directory was specified." ; fi
 
-  if [ $# = 0 ]    ; then verbose $BN: No input file specified ; exit ; fi
+
+### EXCISIONS
+if [ -n "$EXCISIONS" ] ; then
+  # echo "args=${args[@]}"
+  if [ -d "$DIR" ] ; then
+    verbose $BN: output files will be written in $DIR
+  elif [ -r "$DIR" ] ; then
+    die "ERROR: the parameter specified with the --out parameter, $DIR, is a file."
+  else
+    mkdir -p "$DIR" || die "unable to mkdir $DIR"
+  fi
+  excisions "$EXCISIONS"
+  exit $?
+fi
+
+
+### Regular input
+  if [ $# = 0 ]  ; then verbose $BN: No input file specified ; exit ; fi
 
   file="$1"
   shift
 
   # Samples to omit:
 
-  if [ $# = 0 -a -z "$FILE" ] ; then die No samples to excise have been specified ; fi
+  if [ $# = 0 -a -z "$FILE" ] ; then die "No samples to excise have been specified" ; fi
 
-  OMIT=$(mktemp /tmp/excise-gse-by-sample.XXXXXXXXXX) || die Unable to create a temporary file for samples
+  OMIT=$(mktemp /tmp/excise-gse-by-sample.XXXXXXXXXX) || die "Unable to create a temporary file for samples"
 
   if [ $# -gt 0 ] ; then
-    if [ -n "$FILE" ] ; then die Samples to excise cannot be specified by file and on the command line ; fi
+    if [ -n "$FILE" ] ; then die "Samples to excise cannot be specified by file and on the command line" ; fi
     for omit
     do
       echo "$omit" >> $OMIT
@@ -248,8 +309,9 @@ function winnow {
 
   verbose "$BN: $f"
 
-  NPLATFORMS=($(grep '^^PLATFORM' "$f" | wc -l))
-  if [ $NPLATFORMS != 1 ] ; then "die the input file $file has $NPLATFORMS" ; fi
+  NPLATFORMS=$(grep '^^PLATFORM' "$f" | wc -l)
+  # Warning: NPLATFORMS may have extraneous blanks
+  if [ $NPLATFORMS != 1 ] ; then die "Skipping the input file $file as it has $NPLATFORMS platforms" ; fi
 
   NSAMPLES=$(grep -c '^^SAMPLE' "$f")
 
@@ -264,7 +326,8 @@ function winnow {
 
   if [ -r "$OUT" ] ; then
     x=$(stat $STATOPT "%i" "$f" "$OUT" | uniq | wc -l)
-    if [ "$x" != 2 ] ; then die input and output files are identical ; fi
+    # Warning: $x may contain extraneous blanks
+    if [ $x -ne 2 ] ; then die "ERROR: input ($f) and output ($OUT) files are identical" ; fi
   fi
 
 

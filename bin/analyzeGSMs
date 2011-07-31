@@ -7,7 +7,7 @@
 # peak@princeton.edu 2011
 # For help: $0 --help
 
-VERSION=0.1.7
+VERSION=0.1.8
 
 # Updates:
 # 0.1.2: SEEN
@@ -16,17 +16,23 @@ VERSION=0.1.7
 # 0.1.5: SEEN with fgrep
 # 0.1.6: add missing quote
 # 0.1.7: --overwrite
+# 0.1.8: --proceed
+
+ECHO=
+EXCISIONS=excisions.txt
 
 # Requires:
 #   zgrep that works with .gz files
 #   fgrep -x
 #   $DN/analyzeGSMs.rb
 #   $DN/generate_GSM_dictionary if --dict option is specified
+#   $DN/excise-gse-by-sample if --proceed option is specified
 
 BN=$(basename "$0")
 DN=$(cd $(dirname "$0"); pwd)
 
-DEFAULT_OUT="$DN/../data/sce"
+DEFAULT_OUT_DIR="$DN/../data/sce"
+
 function help {
 cat <<EOF
 Syntax: $BN [OPTIONS] [FILE ...]
@@ -37,7 +43,7 @@ identifiers, and analyzes it with a view to eliminating non-trivial
 overlaps.  An overlap is regarded as trivial if it contains just one
 GSM.
 
-Some or all of the files may be compressed (.gz); if both a compressed
+Some or all of the input files may be compressed (.gz); if both a compressed
 and uncompressed version are specified, only the first file that is specified
 will be used.
 
@@ -50,12 +56,25 @@ which this script resides.  The "GSE" and "GSM" prefixes are omitted
 from the mapping file.
 
 If the output file already exists, then an error will be raised unless
-one of the following options is specified: "--overwrite", "--append", or "--skip"
+one of the following options is specified: "--overwrite", "--append",
+or "--skip"
+
+If the --proceed option is specified, then the directory specified by
+OUT will be populated with a set of family.soft files that resolves
+the non-trivial overlaps. Specifically:
+  * if an input GEO series file has been identified as redundant,
+    it will not be copied;
+  * all the other input GEO series files are copied to OUT and then
+    certain excision operations are applied to minimize overlaps
+
+For further details about the resolution process, see the documentation for
+analyzeGSMs.rb (e.g. run "analyzeGSMs.rb --help").
 
 Options:
   --append      :: append to OUT as specified by the --out option.
   --overwrite   :: overwrite OUT if it already exists.
   --skip        :: skip generation of OUT if it already exists.
+  --proceed     :: proceed with the resolution steps as described above.
   --dir DIR     :: the directory of GSE files to be analyzed.
   --out OUT     :: the pathname of the file into which the gse-gsm
                    records are to be written (default: as described above).
@@ -77,7 +96,7 @@ do case "$1" in
       -h | --help ) help
            exit
            ;;
-      -v | --verbose ) VERBOSE=1
+      -v | --verbose ) VERBOSE=-v
            shift
            ;;
       -V | --version ) echo $BN version $VERSION
@@ -90,6 +109,9 @@ do case "$1" in
            shift
            ;;
       --overwrite ) OVERWRITE=1
+           shift
+           ;;
+      --proceed ) PROCEED="--excisions $EXCISIONS"
            shift
            ;;
       --dir ) DIR="$2"
@@ -115,15 +137,24 @@ function die {
 }
 
 function verbose {
-  if [ "$VERBOSE" ] ; then
+  if [ -n "$VERBOSE" ] ; then
     echo ${BN}: "$@"
   fi
 }
 
 if [ -z "$OUT" ] ; then
-  mkdir -p "$DEFAULT_OUT" || die "unable to mkdir $DEFAULT_OUT"
-  OUT=$(cd "$DEFAULT_OUT"; pwd)
+  mkdir -p "$DEFAULT_OUT_DIR" || die "unable to mkdir $DEFAULT_OUT_DIR"
+  OUT=$(cd "$DEFAULT_OUT_DIR"; pwd)
   OUT="$OUT/gse_gsm.txt"
+  verbose OUT=$OUT
+elif [ -d "$OUT" ] ; then
+  OUT="$OUT/gse_gsm.txt"
+  verbose OUT=$OUT
+else
+  OUT_DIR=$(dirname "$OUT")
+  if [ ! -d "$OUT_DIR" ] ; then
+      mkdir -p "$OUT_DIR" || die unable to mkdir $OUT_DIR
+  fi
 fi
 
 # Usage: if seen "$value" ; then ....
@@ -215,12 +246,16 @@ if [ -r "$OUT" ] ; then
   verbose "analyzing $OUT ..."
   if [ -n "$DICT" ] ; then
     sort -u -o "$DICT" "$DICT"
-    "$DN/analyzeGSMs.rb" --sample-title "$DICT" "$OUT" 
+    "$DN/analyzeGSMs.rb" $VERBOSE --sample-title "$DICT" $PROCEED "$OUT" 
   else
-    "$DN/analyzeGSMs.rb" "$OUT" 
+    "$DN/analyzeGSMs.rb" $VERBOSE $PROCEED "$OUT" 
   fi
 else
   echo "$BN: $OUT not found"
+fi
+
+if [ -n "$PROCEED" ] ; then
+  $ECHO $DN/excise-gse-by-sample $VERBOSE --out "$(dirname "$OUT")" $PROCEED
 fi
 
 finish
