@@ -14,8 +14,8 @@
 # 0.0.9: GSM dictionary
 # 0.0.10: --excisions EXCISIONS ; handle missing entries from GSM dictionary explicitly
 # 0.0.11: bugfix for excisions (introduce all_gses)
-# 0.0.12: optimize EXCISIONS file
-# 0.0.13: co-ordinate documentation with analyzeGSMs
+# 0.0.12: give counts for nontrivial overlaps; only run second round of excisions if necessary
+# 0.0.13: typo
 
 # Requirements: standard library
 
@@ -36,6 +36,16 @@ class Set
       enum.each { |o| return true if include?(o)  }
     end
     false
+  end
+
+  # return 2 if intersection has at least 2 elements, 
+  # otherwise return | self & enum |
+  def intersectionIndicator enum
+    count=0
+    each { |o| count += 1 if enum.include?(o)
+      return count if count > 1
+    }
+    count
   end
 
   # Usage: set.subtractOver(y) { |x| gsms[x] }
@@ -163,10 +173,7 @@ optionparser = OptionParser.new do |opts|
 This script can be used to analyze the pattern of sample overlaps
 amongst a set of GEO series files.  Optionally, a set of excision
 directives can be written to a file, as explained below under
-"Excision Directives".  If these directives are followed, then the
-resultant set of files will have all the samples in the original set
-of files, but the non-trivial sample overlaps will be eliminated or
-greatly reduced.
+"Excision Directives".
 
 In the following:
 
@@ -228,20 +235,8 @@ The second form identifies a set of samples to be excised from the
 corresponding gse file.  If no gsm values are given, nothing needs
 to be excised.
 
-If all the directives are followed, then the resulting family.soft
-files will have few if any non-trivial overlaps.
-
-The directives are derived by applying the following procedure
-iteratively:
-
-    Consider two family.soft files, A and B, and let:
-    a = gsms(A), the set of samples in A
-    b = gsms(B), the set of samples in B.
-
-    If |a & b| > 1 and |a| >= |b| and |a - b| > 2,
-    then excise a&b from A.
-
-The directives are then obtained by consolidating the excision operations.
+If all the directives are followed, then the resultant
+family.soft files will have no non-trivial sample overlaps.
 
 
 GSM Dictionary
@@ -274,7 +269,7 @@ Examples:
 
     #{bn} --sample-title gse_gsm.dict --excisions excisions.txt gse_gsm.txt
 
-    #{bn} --sample-title data/download/yeast/gse_gsm.dict data/sce/gse_gsm.txt
+    #{bn} --sample-title /Genomics/Users/peak/spell-tools/data/download/yeast/gse_gsm.dict /Genomics/Users/peak/spell-tools/data/sce/gse_gsm.txt
 
 EOS
 
@@ -397,34 +392,40 @@ if ngses == 0
 end
 
 
-@excisions = nil
-
 if @options.excisions
   begin
     @excisions = File.open(@options.excisions, "w")
   rescue
     print "#{bn}: ERROR - unable to open file #{@options.excisions} but proceeding anyway\n"
+    @excisions = nil
   end
 end
 
 # gses:Array, gsms:Set
+# Returns [overlap, nontrivial]
 def overlaps(gses, gsms, verbose=false)
   overlap = 0
+  nontrivial=0
   ngses = gses.length
   # Computing the intersection is what takes time
   gses.each_with_index { |gse1, i|
     (i+1 ... ngses).each { |j|
       gse2 = gses[j]
-      if gsms[gse1].intersect?( gsms[gse2] )
+      ind = gsms[gse1].intersectionIndicator( gsms[gse2] )
+      if ind > 0
+        overlap += 1 
+        nontrivial += 1 if ind > 1
         print "#{gse1} ^ #{gse2} = #{gsms[gse1].intersection( gsms[gse2] ).length}\n" if verbose
-        overlap += 1
       end
     }
   }
-  overlap
+  [overlap, nontrivial]
 end
 
-print "There are #{overlaps(gses, gsms)} distinct cases of pairwise overlap.\n"
+overlapCounts=overlaps(gses, gsms)
+
+print "There are #{overlapCounts[0]} distinct cases of pairwise overlap.\n"
+print "There are #{overlapCounts[1]} distinct cases of nontrivial pairwise overlap.\n"
 
 # Select one representative from each equivalence class
 # Warning: Set[].#first returns nil 
@@ -437,7 +438,7 @@ printed = nil
 equiv.each { |c| 
   if c.length > 1 
     if not printed
-      print "Equivalence classses of GSEs:\n"
+      print "Non-trivial equivalence classes of GSEs:\n"
       printed = true
     end
     c.stringify
@@ -449,7 +450,8 @@ if @excisions
   equiv.each { |c| 
     c.each_with_index { |gse,i|
       if i > 0
-        @excised[gse] = true
+        @excisions.print "#{gse} ALL\n"
+        @excised[gse] = 1
       end
     }
   }
@@ -468,8 +470,10 @@ nduplicates = ngses - gses.length
 
 print "Henceforth, unless otherwise specified, statistics ignore the #{nduplicates} GSEs that have been identified as duplicates.\n"
 
-print "There are #{overlaps(gses, gsms)} distinct cases of pairwise overlap (ignoring the duplicate GSEs).\n"
+overlapCounts=overlaps(gses, gsms)
 
+print "There are #{overlapCounts[0]} distinct cases of pairwise overlap (ignoring the duplicate GSEs).\n"
+print "There are #{overlapCounts[1]} distinct cases of nontrivial pairwise overlap (ignoring the duplicate GSEs).\n"
 
 # subsets[gse] is the set of GSEs which are subsets of gse
 subsets = {}
@@ -489,6 +493,9 @@ gses.each_with_index { |gse1, i|
 
 print "\nSUBSUMPTION\n"
 
+print "\nIn the following, \"GSE X: S,T, ... \" means gsms(X) is a superset of gsms(S), ...\n"
+print "and \": SUBSUMED\" indicates that gsms(X) is equal to the union of gsms(S), ...\n"
+
 subsets.keys.each { |gse|
   # Compute gsms[gse] - UNION<x in subsets[gse]>  gsms[x]
   diff = gsms[gse].subtractOver(subsets[gse]) {|x| gsms[x]}
@@ -500,7 +507,10 @@ subsets.keys.each { |gse|
     print " : SUBSUMED\n" 
     @subsumed[gse]  = 1
     @redundant[gse] = 1
-    @excised[gse] = true
+    if @excisions
+      @excisions.print "#{gse} ALL\n" 
+      @excised[gse] = 1
+    end
   else
     print "\n"
   end
@@ -561,6 +571,7 @@ print "Part 2: Ignoring Redundant GSEs\n"
 gses = gses - @redundant.keys
 print "Examining #{gses.size} gses of interest...\n"
 
+# return the number of remaining non-trivial overlaps
 def excise connected_components, gses, gsms
   excisions = 0
   connected_components.each { |c|
@@ -575,11 +586,10 @@ def excise connected_components, gses, gsms
         if diff.length > 2  # there must be at least 3 samples left
           inter = (gsms[gse1] & gsms[gse2])
           if @excisions
-            if @excised[gse1] 
-              @excised[gse1] = (@excised[gse1] + inter)
-            else
-              @excised[gse1] = inter
-            end
+            @excisions.print gse1
+            inter.each { |gsm| @excisions.print " #{gsm}" }
+            @excised[gse1] = 1
+            @excisions.print "\n"
           end
           print "gsms[#{gse1}]: #{gsms[gse1].length} -> #{diff.length}\n"
           if @options.verbose and @options.dictionary
@@ -587,6 +597,7 @@ def excise connected_components, gses, gsms
             stringify_gsms inter
           end
           gsms[gse1] = diff
+          @excised[gse1] = 1
           excisions += 1
         end
       }
@@ -595,9 +606,11 @@ def excise connected_components, gses, gsms
 
   print "Number of excisions: #{excisions}\n"
   
-  print "\nOverlaps after excision:\n"
+  print "\nPairwise overlaps after excision:\n"
   overlapping = overlaps(gses.to_a, gsms, true)
-  print "After excision, there are #{overlapping} distinct cases of pairwise overlap.\n"
+  print "   total overlaps:      #{overlapping[0]}\n"
+  print "   nontrivial overlaps: #{overlapping[1]}\n"
+  overlapping[1]
 end
   
 
@@ -619,7 +632,7 @@ end
   print "The number of GSEs in these connected components is #{ connected_components.flatten.length }\n"
 
   #####
-  print "If |A&B|>1 and |A| > |B| and A-B has at least three elements then use A-B and B"
+  print "If |A&B|>1 and |A| > |B| and A-B has at least three elements then use A-B and B\n"
 
   connected_components.each { |c|
     print "\n"
@@ -661,7 +674,7 @@ end
     }
     if all === Set and all.length > 0
       overlap += 1 if inter.length > 1
-      print "all="; stringify_gsms all ; print "\n"
+      print "n-way intersection (n={#c.length}) = "; stringify_gsms all ; print "\n"
     end
   }
 
@@ -675,33 +688,18 @@ end
   #####
 
   print "\nExcising:\n"  
-  excise connected_components, gses, gsms
+  nti=excise connected_components, gses, gsms
 
+  if nti > 0
     print "\nExcising - second round:\n"
-  excise connected_components, gses, gsms
+    excise connected_components, gses, gsms
+  end
 }  # criterion
 
 if @excisions
-  # For the sake of neatness, proceed in three passes:
   all_gses.each { |gse|
-    case @excised[gse]
-    when true
-      @excisions.print gse," ALL\n"
-    end
+    @excisions.print gse,"\n" if not @excised[gse]
   }
-  all_gses.each { |gse|
-    case @excised[gse]
-    when Set
-      @excisions.print gse
-      @excised[gse].each {|gsm| @excisions.print " #{gsm}"}
-      @excisions.print "\n"
-    end
-  }
-  all_gses.each { |gse|
-    case @excised[gse]
-    when nil
-      @excisions.print gse,"\n"
-    end
-  }
-    @excisions.close
 end
+
+@excisions.close if @excisions

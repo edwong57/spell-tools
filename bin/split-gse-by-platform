@@ -10,7 +10,7 @@
 # peak@princeton.edu 2011
 # For help: $0 --help
 
-VERSION=0.0.13
+VERSION=0.0.14
 
 # Requires: ln
 
@@ -18,6 +18,7 @@ VERSION=0.0.13
 # 0.1.11:  + --resume; use stat portably; fix handling of symlink
 # 0.1.12:  rm xx* files
 # 0.1.13:  handle case where wildcard specification yields no files
+# 0.1.14:  manage extraneous blanks that may be produced by "wc -l"
 
 BN=`basename $0`
 
@@ -307,7 +308,7 @@ function link-or-move {
 # Syntax: move-or-explain SOURCE TARGET explanation ....
 # If CHECK = 1 then just echo the explanation
 # Global: CHECK
-
+#
 function move-or-explain {
    local src="$1"
    local tgt="$2"
@@ -388,7 +389,10 @@ do
   unset SAMPLES
 
   # If CHECK=1 then we will NOT be able to "mv $dn $DIR"
+  # CHECK is used by move-or-explain
   CHECK=$(stat $STATOPT "%i" "$dn" "$DIR" | uniq | wc -l)
+  # Remove any extraneous blanks:
+  CHECK=${CHECK// /}
 
   # vverbose 2  dn=$dn
   vverbose 2  gse=$gse
