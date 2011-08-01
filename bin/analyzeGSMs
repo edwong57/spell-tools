@@ -85,6 +85,8 @@ Examples:
 
   $BN --dir . --dict gsm.dict
 
+  $BN --dir . --out resolved/gse-gsm.txt --proceed
+
 Version: $BN $VERSION
 
 See source for copyright and licensing details.
