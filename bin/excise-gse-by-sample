@@ -17,6 +17,7 @@ VERSION=0.0.5
 # 0.0.3: --file FILE
 # 0.0.4: --excisions EXCISIONS
 # 0.0.5: debugged
+# 0.0.6: generated name includes {TAG}{N}
 
 # Requires:
 #   fgrep -x
@@ -27,7 +28,8 @@ DN=`dirname $0`
 VERBOSITY=0
 prefix=xx
 FOUR=4
-
+TAG=s
+COPY="/bin/cp -p"
 # Portability stuff:
 case `uname` in
   Darwin ) STATOPT=-f       ;;
@@ -40,10 +42,13 @@ Syntax: $BN [OPTIONS] --out OUT [PATHNAME [SAMPLE ....]]
 
 This script excises the specified samples from the single-platform
 family.soft file specified by PATHNAME, and writes the output to a
-file as follows:
+file determined as follows:
 
- . if OUT is a directory, the output is written to OUT/FILENAME
-   where FILENAME is the basename of PATHNAME;
+ . if OUT is a directory, the output is written to OUT/{FILENAME}_{TAG}{N}_family.soft
+   where:
+      {FILENAME} is the basename of PATHNAME apart from the _family.soft suffix,
+      {TAG} is "s" unless otherwise specified by the --tag TAG option, and
+      {N} is the total number of samples included in the output;
  . otherwise, the output is written to OUT.
 
 Each SAMPLE should be either a GEO sample identifier (e.g. GSM123) or
@@ -68,6 +73,9 @@ Options:
                     PATHNAME ALL        # ignore this file
                     PATHNAME            # copy the file
                     PATHNAME SAMPLE ... # excise the specified gsm ids
+  --tag TAG      :: the string to be inserted before the sample count when generating
+                    the name of the output file (default: s)
+  --link         :: use ln instead of cp when no alteration is required
   -v | --verbose :: verbose
   -V | --version :: print version
 
@@ -90,14 +98,21 @@ It is assumed that the input GSE file is organized into sections as follows:
 
 Examples:
 
+$ mkdir sce
 $ $BN --out sce GSE10079_family.soft GSM333142 GSM333143 GSM333144
+
+In this case, since sce is a directory, if 52 samples remain, the
+output would be placed in the file sce/GSE10079_s52_family.soft
 
 $ $BN --out sce/GSE10079x_family.soft GSE10079_family.soft 333142 333143 333144
 
 Notes:
- * If PATHNAME has the .gz suffix, the file will be unzipped in the same
-   directory (leaving the original file in place) except that if the unzipped
-   version seems to exist, it will be used.
+
+ * If PATHNAME has the .gz suffix, then:
+    - if the unzipped file also exists in the same directory, then it
+      will be used;
+    - otherwise, PATHNAME will be unzipped in the same directory
+      (leaving the original file in place)
  * The date and a copy of the command line is appended to the file .$BN.log in the
    same directory as the output file.
 
@@ -128,6 +143,12 @@ do case "$1" in
       --out ) DIR="$2"
            shift 2
            ;;
+      --link ) COPY=ln
+	   shift
+           ;;
+      --tag ) TAG="$2"
+	   shift 2
+	   ;;
       --excisions ) EXCISIONS="$2"
            shift 2
            ;;
@@ -202,7 +223,7 @@ function prepare_file {
 # xx0000 header
 # xx0001 series
 # xx0002 platform
-# Global: NSAMPLES OUT
+# Global: NSAMPLES SSAMPLES OUT
 function winnow {
   local i j xx this
   for ((i=0; i < NSAMPLES ; i++)) ; do
@@ -212,8 +233,30 @@ function winnow {
     if ! omitp "$this" ; then
        verbose adding $this
        cat $xx >> "$OUT"
+       SSAMPLES=$((SSAMPLES + 1))
     fi
   done
+}
+
+# Compare SSAMPLES, SELECTED_SAMPLES and ((NSAMPLES - XSAMPLES_))
+# Global BN NSAMPLES SSAMPLES XSAMPLES SELECTED_SAMPLES OUT
+function check-sample-count {
+  local diff=$((NSAMPLES - XSAMPLES))
+  local error n
+  if [ $diff != SELECTED_SAMPLES ] ; then
+     error="$BN: INTERNAL ERROR: "
+  fi
+  n=$( (echo $SSAMPLES ; echo $SELECTED_SAMPLES ; echo $diff) | wc -l)
+  if [ $n != 1 ] ; then
+    error="$BN: warning: there is a discrepancy in the sample counts:"
+  fi
+  if [ -z "$error" ] ; then
+    echo "$error"
+    echo NSAMPLES=$NSAMPLES = actual number of samples in the input file
+    echo XSAMPLES=$XSAMPLES = number of samples that were to be excluded
+    echo SSAMPLES=$SSAMPLES = actual number of samples in the output file
+    echo SELECTED_SAMPLES = $SELECTED_SAMPLES = "| set of input samples - set of excluded samples|"
+  fi
 }
 
 # Syntax: excisions FILE
@@ -237,7 +280,7 @@ function excisions {
       fi
       if [ -r "${gse}_family.soft" ] ; then gse="${gse}_family.soft" ; fi
       if [ "$gsms" = "" ]; then
-         /bin/cp -p "${gse}" "$DIR"
+         $COPY "${gse}" "$DIR"
          continue
       fi
       verbose "$BN: recursive call: excise-gse-by-sample --out $DIR $gse $gsms"
@@ -287,7 +330,8 @@ fi
     cat "$FILE" > $OMIT
   fi
   /bin/mv $OMIT $OMIT.bak
-  sed -e 's/^  *//' -e 's/  *$//' -e 's/^\([0-9]\)/GSM\1/' $OMIT.bak > $OMIT
+  # Use 'sort -u' in the hope that ((NSAMPLES - XSAMPLES)) will be the correct count:
+  sed -e 's/^  *//' -e 's/  *$//' -e 's/^\([0-9]\)/GSM\1/' $OMIT.bak | sort -u > $OMIT
 
   f="$file"
   g=${f/.gz/}
@@ -313,16 +357,26 @@ fi
   # Warning: NPLATFORMS may have extraneous blanks
   if [ $NPLATFORMS != 1 ] ; then die "Skipping the input file $file as it has $NPLATFORMS platforms" ; fi
 
-  NSAMPLES=$(grep -c '^^SAMPLE' "$f")
+  # Get an accurate count of the projected count of remaining samples:
+  grep '^^SAMPLE' "$f" | sed -e 's/[^=]*=//' -e 's/ //g' | sort -u > $OMIT.bak
+
+  # use echo to remove any blanks
+  NSAMPLES=$(echo $(cat $OMIT.bak | wc -l))
+  XSAMPLES=$(echo $(cat $OMIT | wc -l))
+  SELECTED_SAMPLES=$(echo $(comm -23 $OMIT.bak $OMIT | wc -l))
 
   verbose NPLATFORMS=$NPLATFORMS
   verbose NSAMPLES=$NSAMPLES
 
   if [ -d "$DIR" ] ; then
-    OUT="$DIR"/$(basename "$f")
+    OUT=$(basename "$f")
+    OUT=${OUT/_family.soft}
+    OUT="$DIR"/${OUT}_${TAG}${SELECTED_SAMPLES}_family.soft # see check-sample-count
   else
     OUT="$DIR"
   fi
+
+  verbose OUT=$OUT
 
   if [ -r "$OUT" ] ; then
     x=$(stat $STATOPT "%i" "$f" "$OUT" | uniq | wc -l)
@@ -337,7 +391,11 @@ fi
 
   (date ; echo "# cd $(pwd)"; echo "$0 ${args[@]}" ; echo "") >> $(dirname "$OUT")/.$BN.log
 
+  # SSAMPLES keeps tabs on the actual number of SAMPLES written to $OUT
+  SSAMPLES=0
   winnow
+ 
+  check-sample-count
 
 # FOUR
 if [ -r ${prefix}0000 ] ; then
