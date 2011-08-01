@@ -17,6 +17,7 @@ VERSION=0.1.8
 # 0.1.6: add missing quote
 # 0.1.7: --overwrite
 # 0.1.8: --proceed
+# 0.1.9: --link
 
 ECHO=
 EXCISIONS=excisions.txt
@@ -72,9 +73,11 @@ analyzeGSMs.rb (e.g. run "analyzeGSMs.rb --help").
 
 Options:
   --append      :: append to OUT as specified by the --out option.
+  --link        :: use ln instead of cp when no alteration is required.
   --overwrite   :: overwrite OUT if it already exists.
   --skip        :: skip generation of OUT if it already exists.
-  --proceed     :: proceed with the resolution steps as described above.
+  --proceed     :: proceed with the resolution steps as described above;
+                   an excisions file named $EXCISIONS will be created.
   --dir DIR     :: the directory of GSE files to be analyzed.
   --out OUT     :: the pathname of the file into which the gse-gsm
                    records are to be written (default: as described above).
@@ -109,6 +112,9 @@ do case "$1" in
            ;;
       --skip ) SKIP=1
            shift
+           ;;
+      --link ) LINK=--link
+	   shift
            ;;
       --overwrite ) OVERWRITE=1
            shift
@@ -257,7 +263,8 @@ else
 fi
 
 if [ -n "$PROCEED" ] ; then
-  $ECHO $DN/excise-gse-by-sample $VERBOSE --out "$(dirname "$OUT")" $PROCEED
+  verbose DN/excise-gse-by-sample $VERBOSE --out "$(dirname "$OUT")" $PROCEED $LINK
+  $DN/excise-gse-by-sample $VERBOSE --out "$(dirname "$OUT")" $PROCEED $LINK
 fi
 
 finish
