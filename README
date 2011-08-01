@@ -2,10 +2,17 @@ For documentation, see the wiki.
 
 News:
 
+2011.06.27: split-pcl for interactive splitting of PCL files
+
 2011.06.29: .java files are in edu/princeton/function/tools, and
             .class files are placed in the same directory
 
 2011.07.18: SeriesFamilyParser.java now counts certain lines with terminating tabs toward missing value count
 
 2011.07.19: Pipeline now supports per-platform family.soft files (GSEnnnGPLmmm_family.soft)
+
+2011.07.31: The following are now supported:
+            * splitting of GSE files by platform (split-gse-by-platform);
+            * analysis of sample overlaps amongst GSE files (analyzeGSMs);
+            * automated excision of samples from GSE files based on analysis results (analyzeGSMs --proceed)
 
