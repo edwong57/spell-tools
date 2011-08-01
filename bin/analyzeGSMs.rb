@@ -14,8 +14,9 @@
 # 0.0.9: GSM dictionary
 # 0.0.10: --excisions EXCISIONS ; handle missing entries from GSM dictionary explicitly
 # 0.0.11: bugfix for excisions (introduce all_gses)
-# 0.0.12: give counts for nontrivial overlaps; only run second round of excisions if necessary
-# 0.0.13: typo
+# 0.0.12: optimize EXCISIONS file; give counts for nontrivial overlaps; only run second round of excisions if necessary
+# 0.0.13: co-ordinate documentation with analyzeGSMs
+# 0.0.14: merge
 
 # Requirements: standard library
 
@@ -104,7 +105,7 @@ end
 # Unless otherwise specified, for any key, options.key is nil
 @options = OpenStruct.new
 
-@options.version = "0.0.13"
+@options.version = "0.0.15"
 
 @options.gse = 0     # column number minus 1
 @options.gsm = 1     # column number minus 1
@@ -235,8 +236,20 @@ The second form identifies a set of samples to be excised from the
 corresponding gse file.  If no gsm values are given, nothing needs
 to be excised.
 
-If all the directives are followed, then the resultant
-family.soft files will have no non-trivial sample overlaps.
+If all the directives are followed, then the resultant family.soft
+files will have few if any non-trivial overlaps.
+
+The directives are derived by applying the following procedure
+iteratively:
+
+    Consider two family.soft files, A and B, and let:
+    a = gsms(A), the set of samples in A
+    b = gsms(B), the set of samples in B.
+
+    If |a & b| > 1 and |a| >= |b| and |a - b| > 2,
+    then excise a&b from A.
+
+The directives are then obtained by consolidating the excision operations.
 
 
 GSM Dictionary
@@ -269,7 +282,7 @@ Examples:
 
     #{bn} --sample-title gse_gsm.dict --excisions excisions.txt gse_gsm.txt
 
-    #{bn} --sample-title /Genomics/Users/peak/spell-tools/data/download/yeast/gse_gsm.dict /Genomics/Users/peak/spell-tools/data/sce/gse_gsm.txt
+    #{bn} --sample-title data/download/yeast/gse_gsm.dict data/sce/gse_gsm.txt
 
 EOS
 
@@ -392,20 +405,21 @@ if ngses == 0
 end
 
 
+@excisions = nil
+
 if @options.excisions
   begin
     @excisions = File.open(@options.excisions, "w")
   rescue
     print "#{bn}: ERROR - unable to open file #{@options.excisions} but proceeding anyway\n"
-    @excisions = nil
   end
 end
 
 # gses:Array, gsms:Set
 # Returns [overlap, nontrivial]
 def overlaps(gses, gsms, verbose=false)
-  overlap = 0
-  nontrivial=0
+  overlap    = 0
+  nontrivial = 0
   ngses = gses.length
   # Computing the intersection is what takes time
   gses.each_with_index { |gse1, i|
@@ -413,7 +427,7 @@ def overlaps(gses, gsms, verbose=false)
       gse2 = gses[j]
       ind = gsms[gse1].intersectionIndicator( gsms[gse2] )
       if ind > 0
-        overlap += 1 
+        overlap += 1
         nontrivial += 1 if ind > 1
         print "#{gse1} ^ #{gse2} = #{gsms[gse1].intersection( gsms[gse2] ).length}\n" if verbose
       end
@@ -450,8 +464,7 @@ if @excisions
   equiv.each { |c| 
     c.each_with_index { |gse,i|
       if i > 0
-        @excisions.print "#{gse} ALL\n"
-        @excised[gse] = 1
+        @excised[gse] = true
       end
     }
   }
@@ -493,8 +506,8 @@ gses.each_with_index { |gse1, i|
 
 print "\nSUBSUMPTION\n"
 
-print "\nIn the following, \"GSE X: S,T, ... \" means gsms(X) is a superset of gsms(S), ...\n"
-print "and \": SUBSUMED\" indicates that gsms(X) is equal to the union of gsms(S), ...\n"
+print "\nIn the following, \"GSE X: S,T, ... \" means gsms(X) is a superset of each of gsms(S), ...\n"
+print "and \": SUBSUMED\" indicates that gsms(X) is equal to the union of these sets.\n"
 
 subsets.keys.each { |gse|
   # Compute gsms[gse] - UNION<x in subsets[gse]>  gsms[x]
@@ -507,10 +520,7 @@ subsets.keys.each { |gse|
     print " : SUBSUMED\n" 
     @subsumed[gse]  = 1
     @redundant[gse] = 1
-    if @excisions
-      @excisions.print "#{gse} ALL\n" 
-      @excised[gse] = 1
-    end
+    @excised[gse] = true
   else
     print "\n"
   end
@@ -586,10 +596,11 @@ def excise connected_components, gses, gsms
         if diff.length > 2  # there must be at least 3 samples left
           inter = (gsms[gse1] & gsms[gse2])
           if @excisions
-            @excisions.print gse1
-            inter.each { |gsm| @excisions.print " #{gsm}" }
-            @excised[gse1] = 1
-            @excisions.print "\n"
+            if @excised[gse1] 
+              @excised[gse1] = (@excised[gse1] + inter)
+            else
+              @excised[gse1] = inter
+            end
           end
           print "gsms[#{gse1}]: #{gsms[gse1].length} -> #{diff.length}\n"
           if @options.verbose and @options.dictionary
@@ -597,7 +608,6 @@ def excise connected_components, gses, gsms
             stringify_gsms inter
           end
           gsms[gse1] = diff
-          @excised[gse1] = 1
           excisions += 1
         end
       }
@@ -687,7 +697,7 @@ end
 
   #####
 
-  print "\nExcising:\n"  
+  print "\nExcising:\n"
   nti=excise connected_components, gses, gsms
 
   if nti > 0
@@ -697,9 +707,26 @@ end
 }  # criterion
 
 if @excisions
+  # For the sake of neatness, proceed in three passes:
   all_gses.each { |gse|
-    @excisions.print gse,"\n" if not @excised[gse]
+    case @excised[gse]
+    when true
+      @excisions.print gse," ALL\n"
+    end
   }
+  all_gses.each { |gse|
+    case @excised[gse]
+    when Set
+      @excisions.print gse
+      @excised[gse].each {|gsm| @excisions.print " #{gsm}"}
+      @excisions.print "\n"
+    end
+  }
+  all_gses.each { |gse|
+    case @excised[gse]
+    when nil
+      @excisions.print gse,"\n"
+    end
+  }
+  @excisions.close
 end
-
-@excisions.close if @excisions
