@@ -6,10 +6,11 @@
 
 # For help: $0 --help
 
-VERSION=0.0.9
+VERSION=0.0.10
 
 # 0.0.8: Compatibility with Mac OSX
 # 0.0.9: Use ^SAMPLE instead of Series_sample_id
+# 0.1.0  --pubmed option
 
 BN=`basename $0`
 # In case script is called using source: 
@@ -76,6 +77,7 @@ Options specifying selection criteria:
   --series-type TYPE   :: retain only those GSE records of the specified series type (see below)
   --series-types FILE  :: retain only those GSE records with a series type equal to one of the
                           types in the file FILE (one TYPE per line)
+  --pubmed             :: exclude GSE files without a Series_pubmed_id line
 
 Options specifying actions:
 
@@ -212,6 +214,9 @@ do case "$1" in
       --organism ) ORGANISM="$2"
            shift 2
            ;;
+      --pubmed* ) PUBMED=1
+           shift
+           ;;
       --test ) TEST="$2"
 	   ECHO=echo
            shift 2
@@ -305,6 +310,17 @@ function initialize {
   done
 }
 
+function select-by-pubmed {
+  local in="$1"
+  local file
+  # DO NOT PIPE AS THAT CREATES A SUBPROCESS
+  while read file
+  do
+    set-GREP
+    $GREP -q "^!Series_pubmed_id *=" "$file" && echo "$file"
+  done < $in
+}
+
 function select-by-organism {
   local in="$1"
   local file
@@ -312,7 +328,7 @@ function select-by-organism {
   while read file
   do
     set-GREP
-    $GREP -m 1 -q "^!Platform_organism *= *$ORGANISM" "$file" && echo "$file"
+    $GREP -q "^!Platform_organism *= *$ORGANISM" "$file" && echo "$file"
   done < $in
 }
 
@@ -494,6 +510,12 @@ if [ -n "$EXCLUDE" ] ; then
 fi
 
 # For each criterion, select from $OUT.in:
+
+if [ -n "$PUBMED" ] ; then
+  verbose "select-by-pubmed"
+  select-by-pubmed $OUT.in > $OUT.out
+  /bin/mv $OUT.out $OUT.in
+fi
 
 if [ -n "$ORGANISM" ] ; then
   verbose "select-by-organism $ORGANISM"
