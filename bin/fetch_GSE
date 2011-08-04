@@ -6,11 +6,12 @@
 
 # For help: $0 --help
 
-VERSION=0.2.5
-# New in 0.2: --series-type, --series-types, --by-array
-# New in 0.2.1: default ORGANISM changed
-# New in 0.2.2: --since YYYY/MM ; --minimum N
-# New in 0.2.4: compatibility with MacOSX
+VERSION=0.2.6
+# 0.2: --series-type, --series-types, --by-array
+# 0.2.1: default ORGANISM changed
+# 0.2.2: --since YYYY/MM ; --minimum N
+# 0.2.4: compatibility with MacOSX
+# 0.2.6: --pubmed option
 
 # Default organism:
 ORGANISM=Saccharomyces+cerevisiae
@@ -55,6 +56,8 @@ Options:
 
 Criteria:
   --by-array           :: equivalent to: --series-type "Expression profiling by array"
+  --pubmed             :: exclude GSE files without a Series_pubmed_id line; currently
+                          this option is IGNORED unless --download is also specified.
   --organism ORGANISM  :: taxonomic term (see below); default is $ORGANISM
   --since ID           :: if ID is an integer, then ignore GSE records with GSE accession  
                           numbers less than or equal to ID; similarly if ID is a GSE record
@@ -157,6 +160,9 @@ do case "$1" in
       --organism ) ORGANISM="$2"
            shift 2
            ;;
+      --pubmed* ) PUBMED=1
+           shift
+           ;;
       --test ) TEST="$2"
            shift 2
            ;;
@@ -192,6 +198,11 @@ done
 
 
 # Preliminary check of options:
+if [ -n "$PUBMED" -a -z "$DOWNLOAD" ] ; then
+  echo "$BN: WARNING: the --pubmed option will be ignored as no download directory was specified"
+  PUBMED=
+fi
+
 if [ -n "$INCLUDE" -a -n "$EXCLUDE" ] ; then
   echo $BN: only one of --include and --exclude may be specified.
   exit 1
@@ -213,7 +224,6 @@ if [ "$TEST" = -1 ] ; then
   VERBOSE=1
   # SINCE=28390
   # EXCLUDE=/Genomics/Users/peak/spell-tools/data/exclude
-  TMP=~/spell-tools/data/20110427
   KEEP=1
   verbose DOWNLOAD=$DOWNLOAD
   verbose TEST=$TEST
@@ -400,6 +410,34 @@ else
       cat "$INCLUDE" | download
     fi
 fi
+
+# Remove GSE*_family.soft.gz files in $1 that do not have a pubmed id
+# and record those that do in $OUT.pubmed
+# Syntax: check-pubmed DIR
+# Global: $OUT
+function check-pubmed {
+  local file gse
+  local dir="$1"
+  (cd "$dir"
+   for file in GSE*_family.soft.gz
+   do
+     gse=${file/_family*/}
+     zgrep -q "^!Series_pubmed_id *=" "$file"
+     if [ $? = 0 ] ; then
+       echo "$gse" >> $OUT.pubmed
+     else
+       verbose "$file is being removed as it does not have an associated Series_pubmed_id"
+       /bin/rm "$file"
+     fi
+   done
+  )
+}
+
+if [ -n "$PUBMED" ] ; then
+   check-pubmed $DOWNLOAD
+   /bin/mv "$OUT.pubmed" "$OUT.accession"
+fi
+
 
 if [ -r "$OUT.accession" ] ; then
   if [ -n "$OUTFILE" ] ; then
