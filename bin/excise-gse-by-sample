@@ -11,7 +11,7 @@
 
 args=("$@")
 
-VERSION=0.0.7
+VERSION=0.0.8
 
 # History:
 # 0.0.3: --file FILE
@@ -19,6 +19,7 @@ VERSION=0.0.7
 # 0.0.5: debugged
 # 0.0.6: generated name includes {TAG}{N}
 # 0.0.7: reconstruct filename from nnn.mmm format
+# 0.0.8: bug fixes re: reconstruct
 
 # Requires:
 #   fgrep -x
@@ -267,11 +268,11 @@ function reconstruct {
   local file f1 f2
   file="$1"
   if [[ $file =~ ^[0-9][0-9]*$ ]] ; then
-     echo GSE{$file}
+     echo GSE${file}
   elif [[ "$file" =~ ^[0-9][0-9]*\.[0-9][0-9]*$ ]] ; then
-     f1=${gse/[^.]*./}
-     f2=${gse/.*/}
-     echo GSE${f1}GPL{$f2}
+     f1=${file/.*/}
+     f2=${file/[^.]*./}
+     echo GSE${f1}GPL${f2}
   else
      echo "$file"
   fi
@@ -290,6 +291,7 @@ function excisions {
       fi
       # Infer the actual filename:
       gse=$(reconstruct "$gse")
+      vverbose 2 "$BN: reconstruct yielded gse=$gse"
       if [ -r "${gse}_family.soft" ] ; then gse="${gse}_family.soft" ; fi
       if [ "$gsms" = "" ]; then
          $COPY "${gse}" "$DIR" || echo "$BN: failure: $COPY ${gse} $DIR"
@@ -345,7 +347,8 @@ fi
   # Use 'sort -u' in the hope that ((NSAMPLES - XSAMPLES)) will be the correct count:
   sed -e 's/^  *//' -e 's/  *$//' -e 's/^\([0-9]\)/GSM\1/' $OMIT.bak | sort -u > $OMIT
 
-  f=reconstruct "$file"
+  f=$(reconstruct "$file")
+  vverbose 2 "$BN: reconstruct $file yielded $f"
 
   g=${f/.gz/}
   if [ "$f" = "$g" ]; then
