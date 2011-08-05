@@ -23,9 +23,9 @@ VERSION=0.1.14
 # 0.1.9 - gse=GSEnnn or GSEnnn_setABC
 # 0.1.10 - package edu.princeton.function.tools;
 # 0.1.11 - --sfp option
-# 0.1.12  tweaks
-# 0.1.13  mkdir -p
-# 0.1.14
+# 0.1.12 - tweaks
+# 0.1.13 - mkdir -p
+# 0.1.14 - avoid misleading messages if SeriesFamilyParser produces null output
 
 # Requires the following:
 #  java, javac
@@ -354,10 +354,11 @@ function SeriesFamilyParser {
   local in="$1"
   local out="$2"
   local info="$3"
+  local rc
   # $SPELL_TOOLS/seriesFamilyParser.rb "$in" > "$out"
   # GSE13219 causes "Java heap space" failure with default memory on Mac; 300m is sufficient, 200m is not.
   verbose $JAVA -Xmx2g $JPKG.SeriesFamilyParser "$in" "$out" "$info"
-  $JAVA -Xmx2g $JPKG.SeriesFamilyParser "$in" "$out" "$info"
+  $JAVA -Xmx2g $JPKG.SeriesFamilyParser "$in" "$out" "$info" && [[ $(wc -l < "$out") > 2 ]]
   ## $JAVA GeoSeries       "$in" "$out" "$info"
 }
 

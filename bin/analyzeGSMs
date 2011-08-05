@@ -7,7 +7,7 @@
 # peak@princeton.edu 2011
 # For help: $0 --help
 
-VERSION=0.1.8
+VERSION=0.1.10
 
 # Updates:
 # 0.1.2: SEEN
@@ -18,6 +18,7 @@ VERSION=0.1.8
 # 0.1.7: --overwrite
 # 0.1.8: --proceed
 # 0.1.9: --link
+# 0.1.10: always produce $EXCISIONS file
 
 ECHO=
 EXCISIONS=excisions.txt
@@ -58,26 +59,30 @@ from the mapping file.
 
 If the output file already exists, then an error will be raised unless
 one of the following options is specified: "--overwrite", "--append",
-or "--skip"
+or "--skip".
 
-If the --proceed option is specified, then the directory specified by
-OUT will be populated with a set of family.soft files that resolves
-the non-trivial overlaps. Specifically:
-  * if an input GEO series file has been identified as redundant,
-    it will not be copied;
-  * all the other input GEO series files are copied to OUT and then
-    certain excision operations are applied to minimize overlaps
+A file named $EXCISIONS is also produced. This is a file of directives
+for resolving sample overlaps.  If the --proceed option is specified,
+the directives in this file are used to populate the directory
+specified by OUT with a set of family.soft files that resolves the
+non-trivial overlaps.  Specifically:
 
-For further details about the resolution process, see the documentation for
-analyzeGSMs.rb (e.g. run "analyzeGSMs.rb --help").
+ * if an input GEO series file has been identified as redundant, it
+   will not be copied;
+ * all the other input GEO series files are copied to OUT and then
+   certain excision operations are applied to minimize overlaps.
+
+For further details about the resolution process and the format of
+$EXCISIONS, see the documentation for analyzeGSMs.rb (e.g. run
+"analyzeGSMs.rb --help").
+
 
 Options:
   --append      :: append to OUT as specified by the --out option.
   --link        :: use ln instead of cp when no alteration is required.
   --overwrite   :: overwrite OUT if it already exists.
   --skip        :: skip generation of OUT if it already exists.
-  --proceed     :: proceed with the resolution steps as described above;
-                   an excisions file named $EXCISIONS will be created.
+  --proceed     :: proceed with the resolution steps as described above.
   --dir DIR     :: the directory of GSE files to be analyzed.
   --out OUT     :: the pathname of the file into which the gse-gsm
                    records are to be written (default: as described above).
@@ -254,9 +259,9 @@ if [ -r "$OUT" ] ; then
   verbose "analyzing $OUT ..."
   if [ -n "$DICT" ] ; then
     sort -u -o "$DICT" "$DICT"
-    "$DN/analyzeGSMs.rb" $VERBOSE --sample-title "$DICT" $PROCEED "$OUT" 
+    "$DN/analyzeGSMs.rb" $VERBOSE --sample-title "$DICT" --excisions $EXCISIONS "$OUT" 
   else
-    "$DN/analyzeGSMs.rb" $VERBOSE $PROCEED "$OUT" 
+    "$DN/analyzeGSMs.rb" $VERBOSE --excisions $EXCISIONS "$OUT" 
   fi
 else
   echo "$BN: $OUT not found"
