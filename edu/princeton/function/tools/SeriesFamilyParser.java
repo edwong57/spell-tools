@@ -127,7 +127,8 @@ public class SeriesFamilyParser {
 	        if (line.contains("!platform_table_begin")) {
 	        	// The next line contains the platform header columns
 	        	line = fin.readLine();
-	        	System.out.print(line);
+			//peak: println for neatness
+	        	System.out.println(line);
 	        	String[] parts = line.split("\t");
 
 	        	for (String s: keywords.get("Platform probe ID")) {
