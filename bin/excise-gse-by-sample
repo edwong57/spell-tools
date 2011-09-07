@@ -11,7 +11,7 @@
 
 args=("$@")
 
-VERSION=0.0.8
+VERSION=0.0.9
 
 # History:
 # 0.0.3: --file FILE
@@ -20,6 +20,7 @@ VERSION=0.0.8
 # 0.0.6: generated name includes {TAG}{N}
 # 0.0.7: reconstruct filename from nnn.mmm format
 # 0.0.8: bug fixes re: reconstruct
+# 0.0.9: myCopy (avoid failure of ln)
 
 # Requires:
 #   fgrep -x
@@ -278,6 +279,19 @@ function reconstruct {
   fi
 }
 
+# If DIR/FILE is a link or if we are trying to replace it with a hardlink, then rm it
+# Syntax: myCopy FILE DIR
+# Global: COPY
+function mycopy {
+  local FILE="$1"
+  local DIR="$2"
+  if [[ -h "$DIR/$FILE" || ( "$COPY" = ln && -r "$DIR/$FILE" ) ]] ; then
+    verbose "replacing $DIR/$FILE ..."
+    /bin/rm "$DIR/$FILE"
+  fi
+  $COPY "$FILE" "$DIR"
+}
+
 # Syntax: excisions FILE
 # Global: DIR (a directory)
 function excisions {
@@ -294,7 +308,7 @@ function excisions {
       vverbose 2 "$BN: reconstruct yielded gse=$gse"
       if [ -r "${gse}_family.soft" ] ; then gse="${gse}_family.soft" ; fi
       if [ "$gsms" = "" ]; then
-         $COPY "${gse}" "$DIR" || echo "$BN: failure: $COPY ${gse} $DIR"
+         mycopy "${gse}" "$DIR" || echo "$BN: failure: $COPY ${gse} $DIR"
          continue
       fi
       verbose "$BN: recursive call: excise-gse-by-sample --out $DIR $gse $gsms"
