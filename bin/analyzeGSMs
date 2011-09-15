@@ -7,7 +7,7 @@
 # peak@princeton.edu 2011
 # For help: $0 --help
 
-VERSION=0.1.10
+VERSION=0.1.11
 
 # Updates:
 # 0.1.2: SEEN
@@ -19,9 +19,11 @@ VERSION=0.1.10
 # 0.1.8: --proceed
 # 0.1.9: --link
 # 0.1.10: always produce $EXCISIONS file
+# 0.1.11: --minimum MIN (passed to analyzeGSMs.rb)
 
 ECHO=
 EXCISIONS=excisions.txt
+MIN=3
 
 # Requires:
 #   zgrep that works with .gz files
@@ -81,12 +83,15 @@ Options:
   --append      :: append to OUT as specified by the --out option.
   --link        :: use ln instead of cp when no alteration is required.
   --overwrite   :: overwrite OUT if it already exists.
-  --skip        :: skip generation of OUT if it already exists.
   --proceed     :: proceed with the resolution steps as described above.
+  --skip        :: skip generation of OUT if it already exists.
+
+  --dict FILE   :: generate and use a GSM dictionary of sample titles.
   --dir DIR     :: the directory of GSE files to be analyzed.
+  --minimum MIN :: the minimum number of remaining samples there must be in order 
+                   for an excision to be admissible (default: $MIN).
   --out OUT     :: the pathname of the file into which the gse-gsm
                    records are to be written (default: as described above).
-  --dict FILE   :: generate and use a GSM dictionary of sample titles.
 
 Examples:
   $BN --dir .
@@ -124,13 +129,16 @@ do case "$1" in
       --overwrite ) OVERWRITE=1
            shift
            ;;
-      --proceed ) PROCEED="--excisions $EXCISIONS"
+      --proceed ) PROCEED=1
            shift
            ;;
       --dir ) DIR="$2"
            shift 2
            ;;
       --dict ) DICT="$2"
+           shift 2
+           ;;
+      --minimum ) MIN="$2"
            shift 2
            ;;
       --out ) OUT="$2"
@@ -154,6 +162,10 @@ function verbose {
     echo ${BN}: "$@"
   fi
 }
+
+if [ -n "$PROCEED" ] ; then
+  PROCEED="--excisions $EXCISIONS"
+fi
 
 if [ -z "$OUT" ] ; then
   mkdir -p "$DEFAULT_OUT_DIR" || die "unable to mkdir $DEFAULT_OUT_DIR"
@@ -259,9 +271,9 @@ if [ -r "$OUT" ] ; then
   verbose "analyzing $OUT ..."
   if [ -n "$DICT" ] ; then
     sort -u -o "$DICT" "$DICT"
-    "$DN/analyzeGSMs.rb" $VERBOSE --sample-title "$DICT" --excisions $EXCISIONS "$OUT" 
+    "$DN/analyzeGSMs.rb" $VERBOSE --sample-title "$DICT" --excisions $EXCISIONS --minimum $MIN "$OUT" 
   else
-    "$DN/analyzeGSMs.rb" $VERBOSE --excisions $EXCISIONS "$OUT" 
+    "$DN/analyzeGSMs.rb" $VERBOSE --excisions $EXCISIONS --minimum $MIN "$OUT" 
   fi
 else
   echo "$BN: $OUT not found"
