@@ -7,7 +7,7 @@
 # For help: $0 -h
 
 # 0.0.4: handle equivalent GSEs properly
-# 0.0.5: report GSEs for which |A-B|>2
+# 0.0.5: report GSEs for which |A-B|>2 (but see Revision 0.1.16)
 # 0.0.6: "rule of 3" (excisions)
 # 0.0.7: fix bug counting excisions; fix --gsm and --gse options
 # 0.0.8: GSE = string
@@ -17,6 +17,7 @@
 # 0.0.12: optimize EXCISIONS file; give counts for nontrivial overlaps; only run second round of excisions if necessary
 # 0.0.13: co-ordinate documentation with analyzeGSMs
 # 0.0.14: merge
+# 0.1.16: @options.minimum
 
 # Requirements: standard library
 
@@ -39,12 +40,12 @@ class Set
     false
   end
 
-  # return 2 if intersection has at least 2 elements, 
+  # return "min" if intersection has at least "min" elements, 
   # otherwise return | self & enum |
-  def intersectionIndicator enum
+  def intersectionIndicator enum, min
     count=0
     each { |o| count += 1 if enum.include?(o)
-      return count if count > 1
+      return min if count >= min
     }
     count
   end
@@ -61,7 +62,7 @@ class Set
   def stringify
     to_a.sort.each_with_index {|x,i| print "," if i>0; print x }
   end
-end
+end # class Set
 
 # Idiosyncratic methods:
 
@@ -97,7 +98,7 @@ class Set
       }
     }
   end
-end
+end # class Set
 
 
 # q.v. gene_gene_disease_count.rb
@@ -105,7 +106,7 @@ end
 # Unless otherwise specified, for any key, options.key is nil
 @options = OpenStruct.new
 
-@options.version = "0.0.15"
+@options.version = "0.0.16"
 
 @options.gse = 0     # column number minus 1
 @options.gsm = 1     # column number minus 1
@@ -114,6 +115,8 @@ end
 
 @options.input_delimiter = " "
 @options.output_delimiter = " "
+
+@options.minimum = 3
 
 bn = File.basename($0)
 
@@ -130,10 +133,6 @@ optionparser = OptionParser.new do |opts|
 
   opts.on("", "--gsm COLUMN", "Column number of gsm (first column is numbered 1; default is #{@options.gsm})") do |n|
     @options.gsm = n.to_i - 1 # COLUMN is the column number, options.gsm is the column index
-  end
-
-  opts.on("-t", "--terse", "Terse mode") do |n|
-    @options.terse = true
   end
 
   opts.on("", "--overlaps", "Provide information about three-way overlaps for GSEs that are not ignored") do |n|
@@ -155,6 +154,14 @@ optionparser = OptionParser.new do |opts|
 
   opts.on("", "--sample-title DICTIONARY", "Filename or pathname of file of or for GSM dictionary (see below)") do |dict|
     @options.dictionary=dict
+  end
+
+  opts.on("-m", "--minimum MINIMUM", "The minimum number of remaining samples there must be in order for an excision to be admissible") do |v|
+    @options.minimum = v.to_i
+  end
+
+  opts.on("-t", "--terse", "Terse mode") do |n|
+    @options.terse = true
   end
 
   opts.on("", "--excisions EXCISIONS", "Filename or pathname of file for excision directives (see below)") do |file|
@@ -240,13 +247,13 @@ If all the directives are followed, then the resultant family.soft
 files will have few if any non-trivial overlaps.
 
 The directives are derived by applying the following procedure
-iteratively:
+iteratively, where "minimum" defaults to 2:
 
     Consider two family.soft files, A and B, and let:
     a = gsms(A), the set of samples in A
     b = gsms(B), the set of samples in B.
 
-    If |a & b| > 1 and |a| >= |b| and |a - b| > 2,
+    If |a & b| > 1 and |a| >= |b| and |a - b| >= minimum,
     then excise a&b from A.
 
 The directives are then obtained by consolidating the excision operations.
@@ -425,7 +432,7 @@ def overlaps(gses, gsms, verbose=false)
   gses.each_with_index { |gse1, i|
     (i+1 ... ngses).each { |j|
       gse2 = gses[j]
-      ind = gsms[gse1].intersectionIndicator( gsms[gse2] )
+      ind = gsms[gse1].intersectionIndicator( gsms[gse2], 2 )
       if ind > 0
         overlap += 1
         nontrivial += 1 if ind > 1
@@ -566,9 +573,9 @@ print "\nThe following connected components analyses are based on nontrivial int
 print "Part 1: Global Analysis\n"
 gses = Set[* gses]
 cc = gses.divide { |g1,g2|
-  (gsms[g1] & gsms[g2]).length > 1 # ignore trivial overlaps
-  # gsms[g1].intersect?( gsms[g2] )   if gsms[g1]
-  }
+  # ignore trivial overlaps
+  gsms[g1].intersectionIndicator( gsms[g2], 2 ) > 1    # i.e. (gsms[g1] & gsms[g2]).length > 1
+}
 
 connected_components = Set[]
 cc.each { |c| connected_components.add(c) if c.length > 1 }
@@ -593,7 +600,7 @@ def excise connected_components, gses, gsms
                 ! gsms[gse1].intersect?( gsms[gse2] )
 
         diff = gsms[gse1] - gsms[gse2]
-        if diff.length > 2  # there must be at least 3 samples left
+        if diff.length >= @options.minimum  # default: there must be at least 3 samples left
           inter = (gsms[gse1] & gsms[gse2])
           if @excisions
             if @excised[gse1] 
@@ -642,7 +649,7 @@ end
   print "The number of GSEs in these connected components is #{ connected_components.flatten.length }\n"
 
   #####
-  print "If |A&B|>1 and |A| > |B| and A-B has at least three elements then use A-B and B\n"
+  print "If |A&B|>1 and |A| > |B| and A-B has at least #{@options.minimum} elements then use A-B and B\n"
 
   connected_components.each { |c|
     print "\n"
